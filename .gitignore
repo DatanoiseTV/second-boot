@@ -19,3 +19,4 @@ sources/
 *.swp
 *.swo
 tools/libusb/
+projects/pocketchip/tools/libusb
