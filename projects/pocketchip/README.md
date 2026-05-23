@@ -72,7 +72,7 @@ remains recoverable forever short of physical damage to the SoC.
 | Resistive touchscreen   | ⚙  driver loads  | needs runtime verification                |
 | Audio (sun4i-codec)     | ⚙  driver loads  | needs runtime verification                |
 | Keyboard matrix         | ✗ unsupported    | per-revision wiring TBD                   |
-| NAND install            | ✗ deferred       | after RAM boot is fully shaken out        |
+| NAND install pipeline   | ⚙  scripted      | scripts + procedure ready, see [docs/nand-install.md](docs/nand-install.md). Pending RAM-boot sign-off before first run. |
 
 ## Layout
 
@@ -99,6 +99,10 @@ projects/pocketchip/
     06-build-initramfs.sh  busybox smoke-test initramfs
     10-build-openwrt.sh  install DTS, append Device entry, build
     11-pull-openwrt-image.sh  scp artifacts back to the host
+    20-build-uboot-nand.sh  NAND-resident u-boot (UBI bootcmd)
+    21-pack-spl-for-nand.sh wrap SPL with sunxi NAND ECC layout
+    22-build-ubi-image.sh   pack kernel + rootfs into UBI volumes
+    23-flash-nand.sh        run ON the booted PocketCHIP to flash NAND
     fel-boot.sh          drive sunxi-fel to RAM-boot our build
     fel-boot-openwrt.sh  same, but for the OpenWrt initramfs image
   tools/
