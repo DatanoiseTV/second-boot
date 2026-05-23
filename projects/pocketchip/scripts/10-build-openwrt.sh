@@ -20,7 +20,12 @@ REPO="$(cd "$HERE/.." && pwd)"
 . "$HERE/lib.sh"
 
 OW_SRC="$SOURCES_DIR/openwrt"
-[ -d "$OW_SRC" ] || die "openwrt source missing; run: git clone --depth 1 -b v24.10.0 https://git.openwrt.org/openwrt/openwrt.git $OW_SRC"
+if [ ! -d "$OW_SRC" ]; then
+    log "cloning OpenWrt $OPENWRT_REF"
+    git clone "$OPENWRT_REPO" "$OW_SRC"
+fi
+log "checking out $OPENWRT_REF"
+( cd "$OW_SRC" && git fetch --tags --quiet && git checkout --detach "$OPENWRT_REF" --quiet )
 
 # --- 0. enable USB gadget on the sunxi target ------------------------------
 # OpenWrt's sunxi target ships without the 'usbgadget' FEATURES flag
