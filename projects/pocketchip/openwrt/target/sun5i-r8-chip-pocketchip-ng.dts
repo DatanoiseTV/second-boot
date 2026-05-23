@@ -277,7 +277,18 @@
 	nand@0 {
 		reg = <0>;
 		allwinner,rb = <0>;
+		/*
+		 * Match the ECC the original NTC firmware wrote the NAND with,
+		 * or our kernel reads scrambled data and ubifs mount hangs.
+		 * Community-documented values for the CHIP's Toshiba MLC:
+		 * BCH-40 over 1024-byte steps. The sunxi NAND driver
+		 * auto-enables its hardware randomizer for MLC (static seed
+		 * tables match the controller), so no separate randomizer
+		 * property is needed in current mainline.
+		 */
 		nand-ecc-mode = "hw";
+		nand-ecc-strength = <40>;
+		nand-ecc-step-size = <1024>;
 
 		partitions {
 			compatible = "fixed-partitions";
