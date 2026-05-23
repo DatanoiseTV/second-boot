@@ -2,22 +2,19 @@ TODO.md
 STRUCTURE.md
 CLAUDE.md
 
+# Build outputs (per-project)
 build/
 out/
 artifacts/
 *.img
 *.img.xz
-*.bin
 *.tar
 *.tar.*
 
-sources/linux/
-sources/u-boot/
-sources/sunxi-tools/
-sources/linux-firmware/
-sources/*/.git
-sources/*/build/
+# External source trees live on the remote build host; not vendored.
+sources/
 
+# OS / editor cruft
 .DS_Store
 *.swp
 *.swo

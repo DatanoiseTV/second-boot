@@ -1,161 +1,105 @@
-# pocketchip-ng
+# second-boot
 
-Bringing the Next Thing Co. **PocketCHIP** back from the drawer of dead
-electronics with a current mainline Linux kernel, current U-Boot, and a
-properly small OpenWrt userspace you can actually `ssh` into.
+A series of write-ups about pulling forgotten, abandoned, or
+manufacturer-orphaned hardware out of the parts bin and getting it
+running on **current** software again — mainline kernels, current
+bootloaders, sensible userspaces, full hardware support — and doing it
+in a way someone else can reproduce.
 
-This is the first entry in an open-ended series: **dig something out of
-the parts bin, give it a current software stack, document the work end
-to end.** Each repo in the series stands on its own — same approach,
-different victim hardware.
+> *second-boot*: the bootloader you write the second time around — when
+> the vendor is gone, the BSP is dead, and the only thing keeping the
+> board alive is the recovery path nobody at the original company
+> thought you would use.
 
----
+Each entry is a self-contained subdirectory under [`projects/`](projects/).
+Same approach across the series: figure out the recovery / FEL / SWD /
+TFTP / serial-bootloader path first, then climb up the stack until the
+device is actually useful.
 
-## The device
+## Projects
 
-A C.H.I.P. computer (Allwinner R8 — a `sun5i` rebadge of the A13, single
-Cortex-A8, 512 MiB DDR3, 4 GiB SLC NAND, RTL8723BS WiFi+BT, AXP209 PMIC)
-mounted on the PocketCHIP daughterboard that adds a 4.3" 480×272 LCD
-with resistive touch, a tactile QWERTY membrane keyboard, a LiPo battery
-and a USB-A host receptacle.
+| Project | Device | SoC | Status | Notes |
+|---|---|---|---|---|
+| [`pocketchip`](projects/pocketchip/) | Next Thing Co. PocketCHIP (2017) | Allwinner R8 (sun5i, Cortex-A8) | **bringup** | Mainline U-Boot, mainline kernel, OpenWrt rootfs, FEL recovery, USB-gadget SSH over OTG. |
 
-Next Thing Co. went bankrupt in 2018. Their kernel was a 3.4 BSP fork.
-The original Debian image was Jessie. Years of bitrot later, the parts
-bin version still boots its original firmware — and is otherwise
-inert.
-
-This repository takes that hardware to **mainline Linux 6.x** plus
-mainline U-Boot, with first-class hardware support for the bits anyone
-actually needs from a handheld: networking (USB-gadget Ethernet + WiFi),
-SSH, the LCD, the resistive touch, audio, and the AXP209's power
-management. Keyboard matrix is the last loose end and will land once we
-verify the per-revision daughterboard wiring with a multimeter rather
-than guess.
+(More entries will land here. Open an issue if you'd like to suggest a
+target, or read on for how to donate hardware.)
 
 ## The approach
 
-No reflashing the NAND blind. The Allwinner BootROM exposes a
-permanent USB recovery mode (FEL) — short a single pad to ground while
-applying power and the SoC enumerates as a USB device willing to accept
-code into RAM. We use that for everything until the build is solid:
+Every project in this repo follows the same playbook:
+
+1. **Find the recovery path before doing anything else.**
+   On Allwinner SoCs that's FEL (USB BootROM); on Rockchip it's RKDevTool /
+   Maskrom; on NXP it's SDP; on Espressif it's the ROM bootloader UART;
+   on classic Intel it's the BIOS/UEFI shell. *Knowing how to unbrick is
+   the prerequisite to permission to brick.*
+2. **Boot a current upstream U-Boot from RAM via the recovery path.**
+   No writes to the device's storage yet. Iterate freely.
+3. **Boot a current mainline kernel + minimal initramfs into RAM.**
+   Validate enough hardware to know we have a real system: clocks, RAM
+   training, USB, network.
+4. **Layer a real userspace on top.**
+   OpenWrt for hacky-tinker handhelds (small, ssh-default, sane
+   defaults); Debian when the device needs a real glibc desktop.
+5. **Only then, commit to the device's persistent storage.**
+   NAND, eMMC, SPI flash, mSATA — whatever it is, you write to it once
+   you've already booted the same image from RAM successfully across
+   several cold power cycles.
+6. **Document the whole thing in the project's README** so someone with
+   the same device in their drawer can reproduce it end to end.
+
+## Folder layout
 
 ```
-host ──[USB FEL]─► sunxi-fel ──► SPL → DDR init → U-Boot proper
-                                        │
-                              [bootcmd "bootz ..."]
-                                        ▼
-                              kernel → initramfs → /sbin/init
-                                        │
-                              [USB gadget composite via configfs]
-                                        ▼
-                          host sees a CDC-ACM serial console
-                          host sees a CDC-ECM ethernet → 10.43.43.1
-                                        ▼
-                              ssh root@10.43.43.1
+second-boot/
+  README.md             this file — series-level
+  LICENSE
+  projects/
+    pocketchip/
+      README.md         device-specific writeup
+      configs/          kernel + bootloader config fragments
+      dts/              device-tree additions
+      openwrt/          rootfs overlays, package selection
+      docs/             flashing / recovery procedures
+      scripts/          driven build pipeline
+      tools/            git submodules (e.g. sunxi-tools)
+    <future-project>/
+      ...
 ```
 
-NAND writes happen only after the RAM boot is reproducible across cold
-power cycles. FEL stays available even when NAND is wiped, so the box
-remains recoverable forever short of physical damage to the SoC.
-
-## Status
-
-| Component               | State            | Notes                                    |
-|-------------------------|------------------|-------------------------------------------|
-| Mainline U-Boot         | ✓ working        | `CHIP_defconfig` + custom `bootcmd`       |
-| Mainline kernel 6.6/6.12| ✓ working        | sunxi target + PocketCHIP DT              |
-| FEL boot                | ✓ working        | board enumerates, U-Boot runs, kernel runs|
-| USB gadget (ACM + ECM)  | ✓ working        | confirmed by USB enumeration on host      |
-| USB ethernet            | ✓ working        | `ping 10.43.43.1` ≈ 0.4 ms RTT            |
-| AXP209 PMIC             | ✓ working        | mainline driver, regulators correct       |
-| RTL8723BS WiFi+BT       | ⚙  driver loads  | needs runtime verification                |
-| LCD panel + backlight   | ⚙  DT in place   | needs visual confirmation                 |
-| Resistive touchscreen   | ⚙  driver loads  | needs runtime verification                |
-| Audio (sun4i-codec)     | ⚙  driver loads  | needs runtime verification                |
-| Keyboard matrix         | ✗ unsupported    | per-revision wiring TBD                   |
-| NAND install            | ✗ deferred       | after RAM boot is fully shaken out        |
-
-## Layout
-
-```
-pocketchip-ng/
-  README.md              this file
-  LICENSE                MIT
-  .gitignore
-  configs/
-    kernel/              kernel config fragment (over sunxi_defconfig)
-    uboot/               u-boot config fragment (over CHIP_defconfig)
-    rootfs/              authorized_keys, package lists
-  dts/
-    sun5i-r8-chip-pocketchip-ng.dts   PocketCHIP daughterboard DT
-  openwrt/
-    target/              Device entry + DTS for OpenWrt's sunxi target
-    files/               files/ overlay (uci-defaults, dropbear keys,
-                                          usb-gadget init.d service)
-  scripts/
-    versions.env         pinned upstream commit refs
-    01-fetch-sources.sh  clone u-boot, linux, sunxi-tools, firmware
-    02-build-uboot.sh    CHIP_defconfig + our bootcmd fragment
-    03-build-kernel.sh   sunxi_defconfig + our fragment + DTS
-    06-build-initramfs.sh  busybox smoke-test initramfs
-    10-build-openwrt.sh  install DTS, append Device entry, build
-    11-pull-openwrt-image.sh  scp artifacts back to the host
-    fel-boot.sh          drive sunxi-fel to RAM-boot our build
-    fel-boot-openwrt.sh  same, but for the OpenWrt initramfs image
-  tools/
-    sunxi-tools/         git submodule, pinned to v1.4.2
-  docs/
-    flashing.md          FEL recovery procedure + smoke test
-```
-
-External trees (u-boot, linux, openwrt, linux-firmware) are not vendored
-— they're cloned on the build host and pinned by ref in
-`scripts/versions.env`. Reproducibility is the same; the repo stays
-small.
-
-## Building
-
-You need a Linux box with `gcc-arm-linux-gnueabihf`, `u-boot-tools`,
-`device-tree-compiler`, and ~5 GiB of disk for the OpenWrt build tree.
-The build is driven by SSH from a Mac (or anything), but the actual
-cross-compilation runs on the build host.
-
-```
-./scripts/01-fetch-sources.sh      # on the build host
-./scripts/02-build-uboot.sh
-./scripts/10-build-openwrt.sh      # OpenWrt path; long-running
-./scripts/11-pull-openwrt-image.sh # back on the Mac
-./scripts/fel-boot-openwrt.sh      # board in FEL, plug USB
-```
-
-When the kernel finishes coming up, `ssh root@10.43.43.1` works using
-any key listed in the GitHub user whose authorized_keys we baked in.
-
-## FEL — the safety net
-
-The single most important thing to internalize about Allwinner devices:
-**you cannot brick them by software alone**. Hold the `FEL` pad to GND
-while power is applied, plug USB into a host, run `sunxi-fel ver`, and
-the chip is back. Knowing this is the difference between treating an
-embedded board as a black box and treating it as a workbench.
-
-## License
-
-MIT. See [LICENSE](LICENSE). Upstream components (U-Boot, Linux,
-OpenWrt) retain their own licenses.
-
-## The series
-
-If this kind of thing is interesting, the same author plans to do it to
-other dead-or-shelved devices and write up each one in the same way.
-Watch this account.
+Each project subdirectory is roughly self-contained: it has its own
+build pipeline, its own pinned upstream refs, and its own docs.
+Cross-project sharing is fine when it makes sense (a shared bring-up
+checklist, say), but the bias is toward "you can read just one
+subdirectory and know what's going on."
 
 ## Device donations welcome
 
-Got a dead, obsolete, or just-forgotten gadget you'd like to see
-resurrected on the next entry? Old handhelds, abandoned development
-boards, OEM hardware whose vendor went under, e-readers with
-unmaintainable firmware — anything with a CPU that hasn't shipped a
-software update in years is fair game. Open an issue, DM
-[@DatanoiseTV](https://github.com/DatanoiseTV), or just send hardware.
-The interesting ones make it into the series.
+If you have a dead, obsolete, or just-forgotten piece of hardware you'd
+like to see resurrected, **send it.**
+
+Strong candidates:
+- Single-board computers whose vendor went under (Next Thing,
+  Hardkernel pre-Odroid, original Beagleboard variants, etc.)
+- Handhelds with custom Linux (GPD, GP2X, Pandora, old smartphones)
+- Networking gear that's still hardware-capable but software-abandoned
+- E-readers with proprietary firmware
+- Anything with an Allwinner / Rockchip / TI / NXP / Espressif SoC
+  that hasn't seen a software update in three or more years
+
+Open an issue with what you have, DM
+[@DatanoiseTV](https://github.com/DatanoiseTV), or ship it cold —
+contact channels in the GitHub profile. Interesting devices become
+entries; the boring ones at least get tested and returned if requested.
+
+## License
+
+All build glue, scripts, configs, and DTS additions in this repository
+are **MIT** licensed — see [LICENSE](LICENSE). Upstream components used
+during builds (U-Boot, Linux, OpenWrt, Debian) retain their own
+licenses.
+
+## Follow
+
+[github.com/DatanoiseTV](https://github.com/DatanoiseTV)
