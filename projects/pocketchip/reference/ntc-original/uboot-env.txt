@@ -1,0 +1,56 @@
+baudrate=115200
+boot_a_script=load ${devtype} ${devnum}:${distro_bootpart} ${scriptaddr} ${prefix}${script}; source ${scriptaddr}
+boot_extlinux=sysboot ${devtype} ${devnum}:${distro_bootpart} any ${scriptaddr} ${prefix}extlinux/extlinux.conf
+boot_initrd=mtdparts; ubi part UBI; ubifsmount ubi0:rootfs; ubifsload $fdt_addr_r /boot/sun5i-r8-chip.dtb; ubifsload 0x44000000 /boot/initrd.uimage; ubifsload $kernel_addr_r /boot/zImage; bootz $kernel_addr_r 0x44000000 $fdt_addr_r
+boot_noinitrd=mtdparts; ubi part UBI; ubifsmount ubi0:rootfs; ubifsload $fdt_addr_r /boot/sun5i-r8-chip.dtb; ubifsload $kernel_addr_r /boot/zImage; bootz $kernel_addr_r - $fdt_addr_r
+boot_prefixes=/ /boot/
+boot_script_dhcp=boot.scr.uimg
+boot_scripts=boot.scr.uimg boot.scr
+boot_targets=fel usb0 pxe dhcp 
+bootargs=root=ubi0:rootfs rootfstype=ubifs rw earlyprintk ubi.mtd=4
+bootcmd_dhcp=usb start; if dhcp ${scriptaddr} ${boot_script_dhcp}; then source ${scriptaddr}; fi
+bootcmd_fel=if test -n ${fel_booted} && test -n ${scriptaddr}; then echo '(FEL boot)'; source ${scriptaddr}; fi
+bootcmd_pxe=usb start; dhcp; if pxe get; then pxe boot; fi
+bootcmd=run test_fastboot; if test -n ${fel_booted} && test -n ${scriptaddr}; then echo (FEL boot); source ${scriptaddr}; fi; for path in ${bootpaths}; do run boot_$path; done
+bootdelay=1
+bootm_size=0xa000000
+bootpaths=initrd noinitrd
+clear_fastboot=i2c mw 0x34 0x4 0x00 4;
+console=ttyS0,115200
+dfu_alt_info_ram=kernel ram 0x42000000 0x1000000;fdt ram 0x43000000 0x100000;ramdisk ram 0x43300000 0x4000000
+dip_addr_r=0x43400000
+dip_overlay_cmd=if test -n "${dip_overlay_name}"; then ubifsload $dip_addr_r $dip_overlay_dir/$dip_overlay_name; fi
+dip_overlay_dir=/lib/firmware/nextthingco/chip/early
+distro_bootcmd=for target in ${boot_targets}; do run bootcmd_${target}; done
+ethact=usb_ether
+ethaddr=02:99:0a:43:28:02
+fdt_addr_r=0x43000000
+fdtcontroladdr=5ab25520
+fdtfile=sun5i-r8-chip.dtb
+fel_booted=0
+fel_scriptaddr=43100000
+filesize=200
+kernel_addr_r=0x42000000
+kernelarg_video=video=Composite-1:NTSC5
+mtdids=nand0=sunxi-nand.0
+mtdparts=mtdparts=sunxi-nand.0:4m(spl),4m(spl-backup),4m(uboot),4m(env),-(UBI)
+nand_erasesize=400000
+nand_oobsize=500
+nand_writesize=4000
+preboot=usb start
+pxefile_addr_r=0x43200000
+ramdisk_addr_r=0x43300000
+scan_dev_for_boot_part=part list ${devtype} ${devnum} -bootable devplist; env exists devplist || setenv devplist 1; for distro_bootpart in ${devplist}; do if fstype ${devtype} ${devnum}:${distro_bootpart} bootfstype; then run scan_dev_for_boot; fi; done
+scan_dev_for_boot=echo Scanning ${devtype} ${devnum}:${distro_bootpart}...; for prefix in ${boot_prefixes}; do run scan_dev_for_extlinux; run scan_dev_for_scripts; done
+scan_dev_for_extlinux=if test -e ${devtype} ${devnum}:${distro_bootpart} ${prefix}extlinux/extlinux.conf; then echo Found ${prefix}extlinux/extlinux.conf; run boot_extlinux; echo SCRIPT FAILED: continuing...; fi
+scan_dev_for_scripts=for script in ${boot_scripts}; do if test -e ${devtype} ${devnum}:${distro_bootpart} ${prefix}${script}; then echo Found U-Boot script ${prefix}${script}; run boot_a_script; echo SCRIPT FAILED: continuing...; fi; done
+scriptaddr=0x43100000
+splashpos=m,m
+stderr=serial
+stdin=serial,usbkbd
+stdout=serial
+test_fastboot=i2c read 0x34 0x4 4 0x80200000; if itest.s *0x80200000 -eq fb0; then echo (Fastboot); i2c mw 0x34 0x4 0x00 4; fastboot 0; fi
+ubifs_boot=if ubi part UBI && ubifsmount ubi${devnum}:boot; then setenv devtype ubi; setenv bootpart 0; run scan_dev_for_boot; fi
+usb_boot=usb start; if usb dev ${devnum}; then setenv devtype usb; run scan_dev_for_boot_part; fi
+usbnet_devaddr=de:ad:be:af:00:01
+write_fastboot=i2c mw 0x34 0x4 66 1; i2c mw 0x34 0x5 62 1; i2c mw 0x34 0x6 30 1; i2c mw 0x34 0x7 00 1
