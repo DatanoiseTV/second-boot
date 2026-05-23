@@ -8,6 +8,8 @@ Bringing the Next Thing Co. **PocketCHIP** back from the drawer of dead
 electronics with a current mainline Linux kernel, current U-Boot, and a
 properly small OpenWrt userspace you can actually `ssh` into.
 
+<img width="682" height="570" alt="Screenshot 2026-05-23 at 18 04 11" src="https://github.com/user-attachments/assets/92390693-9f4e-4263-a3a2-da09dac01d55" />
+
 ---
 
 ## The device
