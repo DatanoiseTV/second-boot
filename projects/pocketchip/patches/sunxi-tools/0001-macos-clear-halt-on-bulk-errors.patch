@@ -1,0 +1,68 @@
+diff --git a/fel.c b/fel.c
+index 4b1e587..28ac88b 100644
+--- a/fel.c
++++ b/fel.c
+@@ -110,6 +110,17 @@ void usb_bulk_send(libusb_device_handle *usb, int ep, const void *data,
+ 	while (length > 0) {
+ 		chunk = length < max_chunk ? length : max_chunk;
+ 		rc = libusb_bulk_transfer(usb, ep, (void *)data, chunk, &sent, timeout);
++#if defined(__APPLE__)
++		{
++			int retries = 4;
++			while ((rc == LIBUSB_ERROR_TIMEOUT ||
++			        rc == LIBUSB_ERROR_IO ||
++			        rc == LIBUSB_ERROR_PIPE) && retries-- > 0) {
++				(void)libusb_clear_halt(usb, ep);
++				rc = libusb_bulk_transfer(usb, ep, (void *)data, chunk, &sent, timeout);
++			}
++		}
++#endif
+ 		if (rc != 0)
+ 			usb_error(rc, "usb_bulk_send()", 2);
+ 		length -= sent;
+@@ -125,6 +136,24 @@ void usb_bulk_recv(libusb_device_handle *usb, int ep, void *data, int length)
+ 	int rc, recv;
+ 	while (length > 0) {
+ 		rc = libusb_bulk_transfer(usb, ep, data, length, &recv, timeout);
++#if defined(__APPLE__)
++		{
++			/*
++			 * macOS-specific: when the IN bulk pipe stalls or
++			 * times out, libusb leaves it wedged. clear_halt
++			 * sometimes isn't enough on the first try; loop a
++			 * few times before giving up. See comment in
++			 * usb_bulk_send().
++			 */
++			int retries = 4;
++			while ((rc == LIBUSB_ERROR_TIMEOUT ||
++			        rc == LIBUSB_ERROR_IO ||
++			        rc == LIBUSB_ERROR_PIPE) && retries-- > 0) {
++				(void)libusb_clear_halt(usb, ep);
++				rc = libusb_bulk_transfer(usb, ep, data, length, &recv, timeout);
++			}
++		}
++#endif
+ 		if (rc != 0)
+ 			usb_error(rc, "usb_bulk_recv()", 2);
+ 		length -= recv;
+@@ -1514,6 +1543,20 @@ int main(int argc, char **argv)
+ 		exit(1);
+ 	}
+ 
++#if defined(__APPLE__)
++	/*
++	 * macOS USB stack carries endpoint halt state across device opens.
++	 * If a previous sunxi-fel invocation hit a bulk timeout or I/O
++	 * error, the bulk pipes are stuck and every subsequent operation
++	 * times out until physical re-enumeration -- which on macOS still
++	 * frequently doesn't fully clear the kernel-side stash. Clearing
++	 * halt explicitly on both bulk endpoints right after we open
++	 * resets the data toggle and wakes the pipes back up.
++	 */
++	libusb_clear_halt(handle, AW_USB_FEL_BULK_EP_IN);
++	libusb_clear_halt(handle, AW_USB_FEL_BULK_EP_OUT);
++#endif
++
+ 	while (argc > 1 ) {
+ 		int skip = 1;
+ 
