@@ -197,6 +197,10 @@ CONFIG_PACKAGE_uhttpd=y
 
 # Bake our files/ overlay into the rootfs.
 CONFIG_TARGET_PREINIT_TIMEOUT=2
+
+# ccache: OpenWrt has native support; this caches both the host tools
+# and the target cross-compiles across rebuilds.
+CONFIG_CCACHE=y
 EOF
 ( cd "$OW_SRC" && make defconfig >/dev/null )
 
