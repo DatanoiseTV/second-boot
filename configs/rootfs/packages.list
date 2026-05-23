@@ -1,0 +1,57 @@
+# Debian packages installed into the rootfs second-stage.
+# One per line, comments allowed. Keep this list lean — 512 MiB RAM box.
+
+# base
+locales
+sudo
+ca-certificates
+openssh-server
+systemd
+systemd-sysv
+udev
+kmod
+less
+nano
+vim-tiny
+htop
+psmisc
+usbutils
+pciutils
+file
+curl
+wget
+rsync
+ifupdown
+iproute2
+
+# wifi + bt
+network-manager
+wpasupplicant
+wireless-regdb
+crda
+bluez
+rfkill
+firmware-realtek
+
+# audio
+alsa-utils
+pulseaudio
+
+# X stack + minimal WM (handheld)
+xserver-xorg-core
+xserver-xorg-video-modesetting
+xserver-xorg-video-fbdev
+xserver-xorg-input-evdev
+xinit
+openbox
+xterm
+matchbox-keyboard
+xinput-calibrator
+fonts-dejavu-core
+
+# brightness control
+brightnessd
+
+# battery / power
+upower
+acpid

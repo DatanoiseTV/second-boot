@@ -23,10 +23,10 @@ if compgen -G "$HERE/../patches/uboot/*.patch" > /dev/null; then
     done
 fi
 
-log "configuring u-boot (chip_defconfig)"
+log "configuring u-boot (CHIP_defconfig)"
 make -C "$UBOOT_SRC" \
     ARCH="$ARCH" CROSS_COMPILE="$CROSS_COMPILE" \
-    chip_defconfig
+    CHIP_defconfig
 
 log "building u-boot"
 make -C "$UBOOT_SRC" \
