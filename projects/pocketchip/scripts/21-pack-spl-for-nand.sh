@@ -26,7 +26,15 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 
 SPL_BIN="${SPL_BIN:-$ARTIFACTS_DIR/uboot-nand/sunxi-spl.bin}"
 SPL_OUT="${SPL_OUT:-$ARTIFACTS_DIR/uboot-nand/sunxi-spl-nand.bin}"
-NIB="${NIB:-$(cd "$HERE/.." && pwd)/tools/sunxi-tools/sunxi-nand-image-builder}"
+# sunxi-nand-image-builder may live in the build-host clone ($SOURCES_DIR)
+# or the repo submodule (tools/). Prefer whichever is built.
+if [ -n "${NIB:-}" ]; then
+    :
+elif [ -x "$SOURCES_DIR/sunxi-tools/sunxi-nand-image-builder" ]; then
+    NIB="$SOURCES_DIR/sunxi-tools/sunxi-nand-image-builder"
+else
+    NIB="$(cd "$HERE/.." && pwd)/tools/sunxi-tools/sunxi-nand-image-builder"
+fi
 
 PAGE_SIZE="${PAGE_SIZE:-16384}"
 OOB_SIZE="${OOB_SIZE:-1280}"
