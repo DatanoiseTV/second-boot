@@ -22,6 +22,17 @@ REPO="$(cd "$HERE/.." && pwd)"
 OW_SRC="$SOURCES_DIR/openwrt"
 [ -d "$OW_SRC" ] || die "openwrt source missing; run: git clone --depth 1 -b v24.10.0 https://git.openwrt.org/openwrt/openwrt.git $OW_SRC"
 
+# --- 0. enable USB gadget on the sunxi target ------------------------------
+# OpenWrt's sunxi target ships without the 'usbgadget' FEATURES flag
+# (see openwrt-devel patch series msg67156). Without it the build system
+# doesn't pre-wire the gadget kmods. Add it idempotently.
+SUNXI_MK="$OW_SRC/target/linux/sunxi/Makefile"
+if ! grep -E "^FEATURES:=.*\busbgadget\b" "$SUNXI_MK" > /dev/null 2>&1; then
+    log "enabling 'usbgadget' FEATURE on sunxi target"
+    sed -i.bak -E "s/^(FEATURES:=.*)$/\1 usbgadget/" "$SUNXI_MK"
+    rm -f "$SUNXI_MK.bak"
+fi
+
 # --- 1. feeds --------------------------------------------------------------
 log "updating + installing OpenWrt feeds"
 ( cd "$OW_SRC" && ./scripts/feeds update -a >/dev/null && ./scripts/feeds install -a >/dev/null )
@@ -35,6 +46,26 @@ FILES_DIR="$OW_SRC/target/linux/sunxi/files-$KVER/arch/arm/boot/dts/allwinner"
 log "installing PocketCHIP DTS into files-$KVER ($FILES_DIR)"
 mkdir -p "$FILES_DIR"
 cp -v "$REPO/openwrt/target/sun5i-r8-chip-pocketchip-ng.dts" "$FILES_DIR/"
+
+# OpenWrt's files-$KVER/ overlays *new* files into the kernel tree but
+# does NOT merge into existing ones. The kernel's
+# arch/arm/boot/dts/allwinner/Makefile is upstream and doesn't know
+# about our DTB, so dtbs build would skip it. Install a quilt-style
+# patch that adds the line.
+PATCH_DIR="$OW_SRC/target/linux/sunxi/patches-$KVER"
+PATCH_FILE="$PATCH_DIR/999-add-pocketchip-ng-dtb.patch"
+mkdir -p "$PATCH_DIR"
+cat > "$PATCH_FILE" <<'PATCH'
+--- a/arch/arm/boot/dts/allwinner/Makefile
++++ b/arch/arm/boot/dts/allwinner/Makefile
+@@ -1,4 +1,5 @@
+ # SPDX-License-Identifier: GPL-2.0
++dtb-$(CONFIG_MACH_SUN5I) += sun5i-r8-chip-pocketchip-ng.dtb
+ dtb-$(CONFIG_MACH_SUN4I) += \
+ 	sun4i-a10-a1000.dtb \
+ 	sun4i-a10-ba10-tvbox.dtb \
+PATCH
+log "installed DTB Makefile patch at $PATCH_FILE"
 
 # --- 3. Device entry in cortexa8.mk ---------------------------------------
 CORTEXA8_MK="$OW_SRC/target/linux/sunxi/image/cortexa8.mk"
@@ -62,6 +93,7 @@ CONFIG_PACKAGE_kmod-usb-gadget=y
 CONFIG_PACKAGE_kmod-usb-lib-composite=y
 CONFIG_PACKAGE_kmod-usb-gadget-serial=y
 CONFIG_PACKAGE_kmod-usb-gadget-eth=y
+CONFIG_PACKAGE_kmod-usb-gadget-cdc-composite=y
 CONFIG_PACKAGE_kmod-rtl8723bs=y
 CONFIG_PACKAGE_kmod-backlight-pwm=y
 CONFIG_PACKAGE_kmod-bluetooth=y

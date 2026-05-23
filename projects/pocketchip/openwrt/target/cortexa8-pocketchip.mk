@@ -14,6 +14,7 @@ define Device/nextthing_chip-pocketchip-ng
 	kmod-bluetooth \
 	kmod-usb-gadget kmod-usb-lib-composite \
 	kmod-usb-gadget-serial kmod-usb-gadget-eth \
+	kmod-usb-gadget-cdc-composite \
 	kmod-backlight-pwm \
 	wireless-regdb usbutils \
 	dropbear nano htop
