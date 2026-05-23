@@ -262,6 +262,38 @@
 };
 
 /*
+ * On-board 4 GiB NAND (Toshiba TC58TEG5DCLTA00). Mainline chip.dts
+ * leaves the controller disabled; we enable it with the same hardware
+ * ECC mode and partition layout the original NTC firmware uses, so our
+ * kernel can read/write the existing UBI rootfs (and NTC's u-boot keeps
+ * booting /boot/zImage from it). Partition order matters: rootfs is the
+ * 5th partition, so ubi.mtd=4 (in bootargs) targets it.
+ */
+&nfc {
+	pinctrl-names = "default";
+	pinctrl-0 = <&nand_pins>, <&nand_cs0_pin>, <&nand_rb0_pin>;
+	status = "okay";
+
+	nand@0 {
+		reg = <0>;
+		allwinner,rb = <0>;
+		nand-ecc-mode = "hw";
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			partition@0       { label = "SPL";        reg = <0x000000 0x400000>; };
+			partition@400000  { label = "SPL.backup"; reg = <0x400000 0x400000>; };
+			partition@800000  { label = "U-Boot";     reg = <0x800000 0x400000>; };
+			partition@c00000  { label = "env";        reg = <0xc00000 0x400000>; };
+			partition@1000000 { label = "rootfs";     reg = <0x1000000 0xff000000>; };
+		};
+	};
+};
+
+/*
  * LCD wiring: TCON0's RGB output is endpoint@0 (channel 0). The TVE
  * (composite) endpoint@1 is already declared in the SoC dtsi; both
  * coexist so DRM can switch between LCD and composite at runtime.
