@@ -23,7 +23,9 @@ ZIMAGE="${ZIMAGE:-$KERNEL_DIR/zImage}"
 DTB="${DTB:-$KERNEL_DIR/dtbs/sun5i-r8-chip-pocketchip-ng.dtb}"
 
 # OpenWrt squashfs rootfs (built by scripts/10-build-openwrt.sh).
-ROOTFS_SQUASHFS="${ROOTFS_SQUASHFS:-$SOURCES_DIR/openwrt/bin/targets/sunxi/cortexa8/openwrt-sunxi-cortexa8-nextthing_chip-pocketchip-ng-squashfs-rootfs.bin}"
+# The raw squashfs lives in build_dir, not bin/ -- OpenWrt only ships
+# sysupgrade-wrapped images in bin/ for the sunxi target.
+ROOTFS_SQUASHFS="${ROOTFS_SQUASHFS:-$SOURCES_DIR/openwrt/build_dir/target-arm_cortex-a8+vfpv3_musl_eabi/linux-sunxi_cortexa8/root.squashfs}"
 
 PAGE_SIZE="${PAGE_SIZE:-16384}"
 ERASE_BLOCK="${ERASE_BLOCK:-4194304}"
