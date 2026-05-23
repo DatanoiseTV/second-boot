@@ -17,6 +17,15 @@ CONFIG_REGULATOR_AXP20X=y
 CONFIG_AXP20X_POWER=y
 CONFIG_AXP20X_ADC=y
 CONFIG_INPUT_AXP20X_PEK=y
+# The status LED hangs off the AXP209's GPIO (gpios = <&axp_gpio 2>),
+# so without the AXP209 pinctrl/GPIO driver the LED node never registers
+# and nothing can drive it -- it just sits at its power-on default. That
+# made our installer's blink feedback invisible. Enable it.
+CONFIG_PINCTRL_AXP209=y
+# LED class + gpio-led so /sys/class/leds/chip:white:status exists.
+CONFIG_NEW_LEDS=y
+CONFIG_LEDS_CLASS=y
+CONFIG_LEDS_GPIO=y
 
 # --- MMC / NAND ------------------------------------------------------------
 CONFIG_MMC=y
