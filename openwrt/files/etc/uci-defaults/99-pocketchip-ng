@@ -1,0 +1,46 @@
+#!/bin/sh
+# First-boot configuration for the PocketCHIP. uci-defaults scripts run
+# exactly once on first boot, then delete themselves.
+
+set -e
+
+# Hostname.
+uci -q batch <<EOF
+set system.@system[0].hostname='pocketchip'
+set system.@system[0].zonename='UTC'
+set system.@system[0].timezone='UTC'
+commit system
+EOF
+
+# Dropbear: pubkey-only on usb0+wlan0+lo. We deliberately leave the
+# default LAN interface alone -- this device has no Ethernet PHY,
+# just USB-gadget and WiFi.
+uci -q batch <<EOF
+set dropbear.@dropbear[0].PasswordAuth='off'
+set dropbear.@dropbear[0].RootPasswordAuth='off'
+set dropbear.@dropbear[0].GatewayPorts='off'
+set dropbear.@dropbear[0].Port='22'
+commit dropbear
+EOF
+
+# USB-gadget ethernet interface (the gadget side comes up via the
+# /etc/init.d/usb-gadget service; here we just declare the network
+# interface so OpenWrt's netifd brings it into the lan zone).
+uci -q batch <<EOF
+delete network.lan
+set network.lan='interface'
+set network.lan.device='usb0'
+set network.lan.proto='static'
+set network.lan.ipaddr='10.43.43.1'
+set network.lan.netmask='255.255.255.0'
+commit network
+EOF
+
+# Open the firewall on usb0 (lan zone is permissive by default; nothing
+# extra to do beyond making sure usb0 is in it, which the rule above
+# accomplishes).
+
+# Make sure the gadget composite service is enabled.
+/etc/init.d/usb-gadget enable 2>/dev/null || true
+
+exit 0

@@ -1,0 +1,70 @@
+#!/bin/sh /etc/rc.common
+# Brings up a CDC-ACM + CDC-ECM composite USB gadget on the OTG port.
+# Runs early so the host can ssh in over USB as soon as the system
+# reaches userspace.
+
+START=11
+USE_PROCD=1
+
+GADGET=/sys/kernel/config/usb_gadget/pocketchip
+
+setup_gadget() {
+	mountpoint -q /sys/kernel/config || \
+		mount -t configfs none /sys/kernel/config 2>/dev/null
+
+	# Already configured? Nothing to do.
+	[ -d "$GADGET" ] && [ -s "$GADGET/UDC" ] && return 0
+
+	mkdir -p "$GADGET"
+	echo 0x1d6b > "$GADGET/idVendor"        # Linux Foundation
+	echo 0x0104 > "$GADGET/idProduct"       # Multifunction Composite Gadget
+	echo 0x0100 > "$GADGET/bcdDevice"
+	echo 0x0200 > "$GADGET/bcdUSB"
+
+	mkdir -p "$GADGET/strings/0x409"
+	echo "0123456789"     > "$GADGET/strings/0x409/serialnumber"
+	echo "DatanoiseTV"    > "$GADGET/strings/0x409/manufacturer"
+	echo "PocketCHIP-NG"  > "$GADGET/strings/0x409/product"
+
+	mkdir -p "$GADGET/configs/c.1/strings/0x409"
+	echo "ACM+ECM" > "$GADGET/configs/c.1/strings/0x409/configuration"
+	echo 250       > "$GADGET/configs/c.1/MaxPower"
+
+	mkdir -p "$GADGET/functions/acm.GS0"
+	mkdir -p "$GADGET/functions/ecm.usb0"
+
+	# Stable host-side and device-side MACs so the network interface
+	# doesn't change identity across reboots (good for udev rules).
+	echo "02:42:43:48:49:50" > "$GADGET/functions/ecm.usb0/host_addr"
+	echo "02:42:43:48:49:51" > "$GADGET/functions/ecm.usb0/dev_addr"
+
+	ln -sf "$GADGET/functions/acm.GS0"   "$GADGET/configs/c.1/"
+	ln -sf "$GADGET/functions/ecm.usb0"  "$GADGET/configs/c.1/"
+
+	UDC=$(ls /sys/class/udc 2>/dev/null | head -1)
+	if [ -n "$UDC" ]; then
+		echo "$UDC" > "$GADGET/UDC"
+		logger -t usb-gadget "bound to $UDC"
+	else
+		logger -t usb-gadget "no UDC available, skipping bind"
+	fi
+}
+
+teardown_gadget() {
+	[ -d "$GADGET" ] || return 0
+	echo "" > "$GADGET/UDC" 2>/dev/null
+	rm -f "$GADGET/configs/c.1/acm.GS0" "$GADGET/configs/c.1/ecm.usb0"
+	rmdir "$GADGET/configs/c.1/strings/0x409"
+	rmdir "$GADGET/configs/c.1"
+	rmdir "$GADGET/functions/acm.GS0" "$GADGET/functions/ecm.usb0"
+	rmdir "$GADGET/strings/0x409"
+	rmdir "$GADGET"
+}
+
+start_service() {
+	setup_gadget
+}
+
+stop_service() {
+	teardown_gadget
+}
