@@ -1,0 +1,42 @@
+#!/bin/sh
+# wifi-join <ssid> [<password>]
+#
+# Quick way to point the PocketCHIP at a WiFi network without editing
+# /etc/config/wireless by hand. With no password the join is open.
+
+set -e
+
+SSID="$1"
+PSK="$2"
+
+if [ -z "$SSID" ]; then
+    cat <<'EOF' >&2
+usage: wifi-join <ssid> [<password>]
+
+  no password    -> joins an open network
+  with password  -> joins as WPA2-PSK (WPA3 not supported by RTL8723BS)
+
+After joining the radio is brought up immediately. Status:
+  iwinfo phy0 info
+  iwinfo wlan0 assoclist
+  logread -e netifd | tail
+EOF
+    exit 1
+fi
+
+uci set wireless.wifinet0.ssid="$SSID"
+if [ -n "$PSK" ]; then
+    uci set wireless.wifinet0.encryption='psk2'
+    uci set wireless.wifinet0.key="$PSK"
+else
+    uci set wireless.wifinet0.encryption='none'
+    uci -q delete wireless.wifinet0.key || true
+fi
+uci set wireless.wifinet0.disabled='0'
+uci commit wireless
+
+echo "joining '$SSID'..."
+wifi reload
+echo "done. Check association with:"
+echo "  iwinfo phy0 info"
+echo "  ip -br addr"

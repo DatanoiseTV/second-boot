@@ -17,7 +17,9 @@ define Device/nextthing_chip-pocketchip-ng
 	kmod-usb-gadget-cdc-composite \
 	kmod-backlight-pwm \
 	wireless-regdb usbutils \
-	dropbear nano htop
+	dropbear nano htop \
+	luci luci-mod-network luci-mod-status luci-mod-system \
+	luci-app-firewall luci-theme-bootstrap
   SOC := sun5i
   SUNXI_DTS := $$(SUNXI_DTS_DIR)sun5i-r8-chip-pocketchip-ng
   IMAGES := sysupgrade.bin

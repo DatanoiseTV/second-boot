@@ -1,0 +1,33 @@
+#
+# WiFi template for the PocketCHIP / RTL8723BS.
+#
+# Edit this file in place (it's gitignored from sysupgrade in OpenWrt's
+# default /etc/sysupgrade.conf, so it survives upgrades) and run:
+#
+#     wifi reload    # apply changes without dropping ssh
+#
+# Or use the helper:
+#
+#     wifi-join <SSID> [<password>]
+#
+# `wifi-join` rewrites the wifinet0 ssid/encryption/key, brings the
+# radio out of 'disabled', commits, and reloads. With no password it
+# joins an open network.
+#
+
+config wifi-device 'radio0'
+	option type 'mac80211'
+	option phy 'phy0'
+	option country 'US'         # change to your regulatory domain (DE, GB, ...)
+	option channel 'auto'
+	option band '2g'            # RTL8723BS is 2.4 GHz only
+	option htmode 'HT20'
+
+config wifi-iface 'wifinet0'
+	option device 'radio0'
+	option network 'wwan'       # uplink interface (defined in /etc/config/network)
+	option mode 'sta'           # 'sta' = client (join an AP)
+	option ssid 'YourNetworkName'
+	option encryption 'psk2'    # 'psk2' WPA2-PSK, 'none' for open, 'psk-mixed' for WPA/WPA2
+	option key 'YourPassword'
+	option disabled '1'         # ← set to '0' (or run `wifi-join`) when ready

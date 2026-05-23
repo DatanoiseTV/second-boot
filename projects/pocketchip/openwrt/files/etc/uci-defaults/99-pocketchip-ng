@@ -40,6 +40,24 @@ EOF
 # extra to do beyond making sure usb0 is in it, which the rule above
 # accomplishes).
 
+# WWAN interface: this is where the (currently disabled) WiFi station
+# in /etc/config/wireless will get its IP via DHCP when the user enables
+# the radio with `wifi-join <ssid> <pw>` or by editing /etc/config/wireless.
+uci -q batch <<EOF
+delete network.wwan
+set network.wwan='interface'
+set network.wwan.proto='dhcp'
+commit network
+EOF
+
+# Add wwan to the wan firewall zone so the radio uplink is treated as
+# external (NAT'd, conservative). The lan zone (usb0) stays trusted so
+# we can ssh in over USB without firewall fights.
+uci -q batch <<EOF
+add_list firewall.@zone[1].network='wwan'
+commit firewall
+EOF
+
 # Make sure the gadget composite service is enabled.
 /etc/init.d/usb-gadget enable 2>/dev/null || true
 

@@ -43,12 +43,14 @@ patch_kernel_config() {
     local cfg="$1"
     local sym="$2"
     local val="$3"
-    local marker="CONFIG_${sym}=${val}"
-    grep -q "^$marker$" "$cfg" && return 0
-    # Drop any existing "# CONFIG_X is not set" or "CONFIG_X=..." line.
+    # Drop any existing entry (# CONFIG_X is not set, CONFIG_X=*).
     sed -i.bak -E "/^(# )?CONFIG_${sym}( is not set|=)/d" "$cfg"
     rm -f "$cfg.bak"
-    echo "$marker" >> "$cfg"
+    if [ "$val" = "n" ]; then
+        echo "# CONFIG_${sym} is not set" >> "$cfg"
+    else
+        echo "CONFIG_${sym}=${val}" >> "$cfg"
+    fi
 }
 SUNXI_KCFG=$(ls "$OW_SRC/target/linux/sunxi/config-"* | head -1)
 log "enabling MUSB + USB phy in $SUNXI_KCFG"
@@ -75,8 +77,15 @@ patch_kernel_config "$SUNXI_KCFG" USB_F_SUBSET       y
 patch_kernel_config "$SUNXI_KCFG" USB_F_RNDIS        y
 patch_kernel_config "$SUNXI_KCFG" USB_U_SERIAL       y
 patch_kernel_config "$SUNXI_KCFG" USB_U_ETHER        y
-patch_kernel_config "$SUNXI_KCFG" USB_ETH            y
-patch_kernel_config "$SUNXI_KCFG" USB_ETH_RNDIS      y
+# DO NOT enable USB_ETH (legacy g_ether). When two built-in legacy
+# gadgets exist (USB_ETH + USB_CDC_COMPOSITE) only one wins the UDC
+# at init time; g_ether tends to win, but it speaks RNDIS rather than
+# CDC-ECM and macOS does not have an RNDIS driver out of the box.
+# Leaving USB_ETH out of the kernel lets g_cdc (CDC-ACM + CDC-ECM)
+# bind cleanly -- macOS sees /dev/cu.usbmodem* and a real CDC-ECM
+# network interface, and ssh-over-USB works.
+patch_kernel_config "$SUNXI_KCFG" USB_ETH            n
+patch_kernel_config "$SUNXI_KCFG" USB_ETH_RNDIS      n
 patch_kernel_config "$SUNXI_KCFG" USB_CDC_COMPOSITE  y
 
 # --- 1. feeds --------------------------------------------------------------
@@ -150,6 +159,17 @@ CONFIG_PACKAGE_dropbear=y
 CONFIG_PACKAGE_nano=y
 CONFIG_PACKAGE_htop=y
 CONFIG_PACKAGE_usbutils=y
+# LuCI web UI -- reachable at http://10.43.43.1/ from the host over the
+# USB-ethernet gadget once the board is up.
+CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_luci-base=y
+CONFIG_PACKAGE_luci-compat=y
+CONFIG_PACKAGE_luci-mod-network=y
+CONFIG_PACKAGE_luci-mod-status=y
+CONFIG_PACKAGE_luci-mod-system=y
+CONFIG_PACKAGE_luci-app-firewall=y
+CONFIG_PACKAGE_luci-theme-bootstrap=y
+CONFIG_PACKAGE_uhttpd=y
 
 # Bake our files/ overlay into the rootfs.
 CONFIG_TARGET_PREINIT_TIMEOUT=2
