@@ -57,6 +57,27 @@ patch_kernel_config "$SUNXI_KCFG" USB_MUSB_DUAL_ROLE y
 patch_kernel_config "$SUNXI_KCFG" USB_MUSB_SUNXI     y
 patch_kernel_config "$SUNXI_KCFG" NOP_USB_XCEIV      y
 patch_kernel_config "$SUNXI_KCFG" USB_GADGET         y
+# No DMA engine for sun5i MUSB exists upstream (Inventra DMA depends on
+# OMAP/MediaTek/JZ4740/PolarFire), so MUSB falls back to PIO. Default
+# this to y so Kconfig doesn't stop at an interactive prompt.
+patch_kernel_config "$SUNXI_KCFG" MUSB_PIO_ONLY      y
+# Build the gadget composite (CDC-ACM + CDC-ECM) into the kernel
+# rather than leaving it as a userspace-loaded module. Userspace
+# modprobe of g_cdc was unreliable on early boot for us (no UDC
+# attached when modprobe fired, leaving the OTG port silent); making
+# it built-in lets the gadget register during kernel init, before
+# userspace runs.
+patch_kernel_config "$SUNXI_KCFG" USB_LIBCOMPOSITE   y
+patch_kernel_config "$SUNXI_KCFG" USB_F_ACM          y
+patch_kernel_config "$SUNXI_KCFG" USB_F_ECM          y
+patch_kernel_config "$SUNXI_KCFG" USB_F_SERIAL       y
+patch_kernel_config "$SUNXI_KCFG" USB_F_SUBSET       y
+patch_kernel_config "$SUNXI_KCFG" USB_F_RNDIS        y
+patch_kernel_config "$SUNXI_KCFG" USB_U_SERIAL       y
+patch_kernel_config "$SUNXI_KCFG" USB_U_ETHER        y
+patch_kernel_config "$SUNXI_KCFG" USB_ETH            y
+patch_kernel_config "$SUNXI_KCFG" USB_ETH_RNDIS      y
+patch_kernel_config "$SUNXI_KCFG" USB_CDC_COMPOSITE  y
 
 # --- 1. feeds --------------------------------------------------------------
 log "updating + installing OpenWrt feeds"
