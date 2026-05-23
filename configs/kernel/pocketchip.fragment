@@ -84,9 +84,11 @@ CONFIG_BT_HCIUART_3WIRE=y
 CONFIG_BT_RTL=y
 
 # --- USB gadget: serial console + ethernet over OTG ------------------------
-# Built-in so the kernel can use ttyGS0 as a console from very early boot,
-# and so the Mac sees both /dev/cu.usbmodem* and a USB ethernet interface
-# the moment the PocketCHIP boots.
+# Configfs-only. Do NOT enable the legacy g_serial / g_ether gadget
+# drivers (CONFIG_USB_G_SERIAL / CONFIG_USB_ETH) -- those auto-bind to
+# the UDC at boot and block the initramfs from setting up a proper
+# composite gadget. We compose CDC-ACM (serial console) + CDC-ECM
+# (USB ethernet, native on macOS) from /init via configfs instead.
 CONFIG_USB_GADGET=y
 CONFIG_USB_MUSB_GADGET=y
 CONFIG_USB_LIBCOMPOSITE=y
@@ -95,11 +97,7 @@ CONFIG_USB_CONFIGFS_SERIAL=y
 CONFIG_USB_CONFIGFS_ACM=y
 CONFIG_USB_CONFIGFS_ECM=y
 CONFIG_USB_CONFIGFS_RNDIS=y
-CONFIG_USB_G_SERIAL=y
-CONFIG_USB_ETH=y
-CONFIG_USB_ETH_RNDIS=y
-CONFIG_USB_ETH_EEM=y
-# Make /dev/ttyGS0 available as an early console target.
+# /dev/ttyGS0 as an early console target. Works with configfs ACM.
 CONFIG_U_SERIAL_CONSOLE=y
 
 # --- userland niceties -----------------------------------------------------

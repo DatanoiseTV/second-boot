@@ -141,16 +141,32 @@ fi
 ip link set lo up
 ip link set usb0 up 2>/dev/null
 ip addr add 10.43.43.1/24 dev usb0 2>/dev/null
-banner "usb0 = 10.43.43.1/24 (host should DHCP-less assign 10.43.43.2)"
+banner "usb0 = 10.43.43.1/24"
+banner "host should assign itself anything in 10.43.43.0/24; try:"
+banner "  sudo ifconfig <usb-iface> 10.43.43.2/24 up"
 
-# Try to load WiFi
+# Try to load WiFi (will silently fail if module is missing)
 modprobe r8723bs 2>/dev/null && banner "r8723bs loaded" || banner "no r8723bs module"
 
+# Two ways to talk to this box from the host:
+#   (a) USB CDC-ACM serial:  /dev/cu.usbmodem* (macOS) / /dev/ttyACM* (Linux)
+#   (b) telnet:              telnet 10.43.43.1
+# We start a busybox getty on ttyGS0 plus a passwordless telnetd as a
+# belt-and-suspenders fallback in case the host can't open the ACM tty.
+if [ -e /dev/ttyGS0 ]; then
+    banner "spawning login-less shell on /dev/ttyGS0"
+    setsid /bin/sh -c 'while true; do /bin/sh </dev/ttyGS0 >/dev/ttyGS0 2>&1; done' &
+fi
+
+banner "starting telnetd on 10.43.43.1:23 (no auth, /bin/sh)"
+telnetd -l /bin/sh -b 10.43.43.1 2>/dev/null &
+
 banner ""
-banner "dropping to shell on /dev/console (ttyGS0/tty0)"
+banner "ready -- both /dev/ttyGS0 and telnet 10.43.43.1 give a shell"
 banner ""
 
-exec setsid sh -c 'exec sh </dev/console >/dev/console 2>&1'
+# Keep PID 1 alive forever; the workers above own the consoles.
+exec /bin/sh -c 'while true; do sleep 3600; done' </dev/null >/dev/null 2>&1
 INIT
 chmod +x "$STAGE/init"
 
