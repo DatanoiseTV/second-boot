@@ -275,20 +275,25 @@
 	status = "okay";
 
 	nand@0 {
+		#address-cells = <2>;
+		#size-cells = <2>;
 		reg = <0>;
 		allwinner,rb = <0>;
 		/*
-		 * Match the ECC the original NTC firmware wrote the NAND with,
-		 * or our kernel reads scrambled data and ubifs mount hangs.
-		 * Community-documented values for the CHIP's Toshiba MLC:
-		 * BCH-40 over 1024-byte steps. The sunxi NAND driver
-		 * auto-enables its hardware randomizer for MLC (static seed
-		 * tables match the controller), so no separate randomizer
-		 * property is needed in current mainline.
+		 * Match macromorgan/chip-debroot, the proven mainline CHIP
+		 * NAND config:
+		 *  - nand-ecc-maximize: driver picks the strongest BCH that
+		 *    fits the OOB (40-bit/1024 on this 16K-page/1280-OOB chip),
+		 *    matching what NTC's driver used.
+		 *  - nand-on-flash-bbt: read the bad-block table from flash
+		 *    instead of doing a full factory-BBT scan -- the scan HANGS
+		 *    on this Toshiba MLC, which is why our earlier probe stalled
+		 *    (steady LED, no /init).
+		 * The sunxi driver auto-enables the hardware randomizer for MLC.
 		 */
 		nand-ecc-mode = "hw";
-		nand-ecc-strength = <40>;
-		nand-ecc-step-size = <1024>;
+		nand-ecc-maximize;
+		nand-on-flash-bbt;
 
 		partitions {
 			compatible = "fixed-partitions";
