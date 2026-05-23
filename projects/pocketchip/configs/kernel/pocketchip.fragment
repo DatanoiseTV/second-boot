@@ -97,18 +97,15 @@ CONFIG_USB_CONFIGFS_SERIAL=y
 CONFIG_USB_CONFIGFS_ACM=y
 CONFIG_USB_CONFIGFS_ECM=y
 CONFIG_USB_CONFIGFS_RNDIS=y
-# Legacy g_ether built-in as the canonical USB-network gadget.
-# Auto-binds the UDC at kernel init, before any userspace runs.
-#
-# USB_ETH_RNDIS=n: do NOT enable RNDIS. With RNDIS enabled g_ether
-# advertises a composite ECM+RNDIS gadget and the device shows up to
-# the host as 'RNDIS_Ethernet Gadget'. macOS has no native RNDIS
-# driver, so that path leaves the device visible but unusable.
-# With RNDIS off, g_ether exposes only CDC-ECM, which macOS, Linux
-# and Windows 10+ all recognise natively as a network interface.
-CONFIG_USB_ETH=y
-# CONFIG_USB_ETH_RNDIS is not set
-# CONFIG_USB_ETH_EEM is not set
+# Do NOT build any legacy gadget (USB_ETH / USB_G_SERIAL) into the
+# kernel. They auto-bind the single UDC at kernel init -- before
+# userspace runs -- which blocks the initramfs /init from composing a
+# CDC-ACM + CDC-ECM gadget via configfs. The configfs composite is
+# what gives us BOTH a serial console (/dev/cu.usbmodem*) and a
+# network interface, and it's the setup that demonstrably enumerated
+# as 'PocketCHIP-NG' earlier. So leave the UDC free for /init.
+# CONFIG_USB_ETH is not set
+# CONFIG_USB_G_SERIAL is not set
 # /dev/ttyGS0 as an early console target. Works with configfs ACM.
 CONFIG_U_SERIAL_CONSOLE=y
 

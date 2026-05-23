@@ -27,9 +27,16 @@ DTB="${DTB:-$KERNEL_DIR/dtbs/sun5i-r8-chip-pocketchip-ng.dtb}"
 # sysupgrade-wrapped images in bin/ for the sunxi target.
 ROOTFS_SQUASHFS="${ROOTFS_SQUASHFS:-$SOURCES_DIR/openwrt/build_dir/target-arm_cortex-a8+vfpv3_musl_eabi/linux-sunxi_cortexa8/root.squashfs}"
 
+# Geometry for the 4 GB C.H.I.P. NAND (confirmed from a flashing session:
+# 16K page, 1280 OOB, 4M erase block). This MLC NAND does not support
+# sub-page writes, so the UBI min-I/O unit is the full page.
 PAGE_SIZE="${PAGE_SIZE:-16384}"
 ERASE_BLOCK="${ERASE_BLOCK:-4194304}"
-SUB_PAGE="${SUB_PAGE:-2048}"
+MIN_IO="${MIN_IO:-$PAGE_SIZE}"
+# UBI reserves 2 min-I/O units per erase block (EC + VID headers), so the
+# logical erase block (LEB) is PEB - 2*min_io. Must be a multiple of
+# min_io, which it is: (4M - 2*16K) / 16K = 254.
+LEB=$((ERASE_BLOCK - 2 * MIN_IO))
 
 for f in "$ZIMAGE" "$DTB" "$ROOTFS_SQUASHFS"; do
     [ -f "$f" ] || die "missing artifact: $f"
@@ -50,15 +57,10 @@ label pocketchip
     append ubi.mtd=UBI root=ubi0:rootfs rootfstype=ubifs rw console=tty0 console=ttyGS0,115200 loglevel=4 panic=10
 EOF
 
-log "building UBIFS image for boot volume"
-# mkfs.ubifs: -m page-size, -e logical erase block size (= physical EB
-# minus 2*page for UBI overhead), -c max LEB count.
-# For 16K page, 4M EB: LEB = 4M - 2*16K = 4063232? Actually UBI uses
-# 2*MIN_IO_SIZE for headers; with subpage of 2K, overhead is 4K -> LEB
-# = 4M - 4K = 4190208.
+log "building UBIFS image for boot volume (min_io=$MIN_IO LEB=$LEB)"
 mkfs.ubifs \
-    -m "$PAGE_SIZE" \
-    -e $((ERASE_BLOCK - SUB_PAGE * 2)) \
+    -m "$MIN_IO" \
+    -e "$LEB" \
     -c 8 \
     -r "$STAGE/boot" \
     -o "$UBI_OUT_DIR/boot.ubifs"
@@ -92,11 +94,12 @@ vol_flags=autoresize
 EOF
 
 log "running ubinize"
+# -m min-io, -p physical erase block. No -s (sub-page) because this MLC
+# NAND has no usable sub-pages; min-io is the full page.
 ubinize \
     -o "$UBI_OUT_DIR/pocketchip.ubi" \
-    -m "$PAGE_SIZE" \
+    -m "$MIN_IO" \
     -p "$ERASE_BLOCK" \
-    -s "$SUB_PAGE" \
     "$UBI_OUT_DIR/ubi.cfg"
 
 log "UBI image: $(du -h "$UBI_OUT_DIR/pocketchip.ubi" | cut -f1) at $UBI_OUT_DIR/pocketchip.ubi"
