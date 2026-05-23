@@ -33,6 +33,31 @@ if ! grep -E "^FEATURES:=.*\busbgadget\b" "$SUNXI_MK" > /dev/null 2>&1; then
     rm -f "$SUNXI_MK.bak"
 fi
 
+# --- 0.5. enable MUSB driver in the sunxi kernel config --------------------
+# OpenWrt's sunxi kernel config explicitly excludes the MUSB driver
+# (CONFIG_USB_MUSB_HDRC is not set). Without it the SoC has no USB
+# Device Controller, so no gadget driver can ever bind. The CHIP's OTG
+# port is musb-driven; we add the symbols to config-<kver> so they
+# become part of the kernel build.
+patch_kernel_config() {
+    local cfg="$1"
+    local sym="$2"
+    local val="$3"
+    local marker="CONFIG_${sym}=${val}"
+    grep -q "^$marker$" "$cfg" && return 0
+    # Drop any existing "# CONFIG_X is not set" or "CONFIG_X=..." line.
+    sed -i.bak -E "/^(# )?CONFIG_${sym}( is not set|=)/d" "$cfg"
+    rm -f "$cfg.bak"
+    echo "$marker" >> "$cfg"
+}
+SUNXI_KCFG=$(ls "$OW_SRC/target/linux/sunxi/config-"* | head -1)
+log "enabling MUSB + USB phy in $SUNXI_KCFG"
+patch_kernel_config "$SUNXI_KCFG" USB_MUSB_HDRC      y
+patch_kernel_config "$SUNXI_KCFG" USB_MUSB_DUAL_ROLE y
+patch_kernel_config "$SUNXI_KCFG" USB_MUSB_SUNXI     y
+patch_kernel_config "$SUNXI_KCFG" NOP_USB_XCEIV      y
+patch_kernel_config "$SUNXI_KCFG" USB_GADGET         y
+
 # --- 1. feeds --------------------------------------------------------------
 log "updating + installing OpenWrt feeds"
 ( cd "$OW_SRC" && ./scripts/feeds update -a >/dev/null && ./scripts/feeds install -a >/dev/null )
