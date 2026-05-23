@@ -316,7 +316,11 @@
  * floats high, which the driver reads as peripheral mode.
  */
 &usb_otg {
-	dr_mode = "otg";
+	/* peripheral: force gadget mode (worked in our first successful
+	 * mainline 6.12 FEL boot; PocketCHIP-NG enumeration appeared).
+	 * 'otg' depends on ID-GPIO detection which is hardware-flaky.
+	 */
+	dr_mode = "peripheral";
 	status = "okay";
 };
 
