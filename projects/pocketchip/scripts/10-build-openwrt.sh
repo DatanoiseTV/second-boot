@@ -142,18 +142,37 @@ else
 fi
 
 # --- 4. .config ------------------------------------------------------------
-log "writing OpenWrt .config (cortexa8 + nextthing_chip-pocketchip-ng)"
+# Two-pass defconfig is needed on OpenWrt 25.12+: the first 'make
+# defconfig' (with a minimal target seed) generates tmp/info, which
+# Kconfig in 25.12 requires before the full .config can be expanded.
+# Without the first pass the build dies with "Missing kernel
+# version/hash file" because the target name resolves to empty.
+log "first-pass defconfig to populate tmp/info"
+cat > "$OW_SRC/.config" <<'EOF'
+CONFIG_TARGET_sunxi=y
+CONFIG_TARGET_sunxi_cortexa8=y
+CONFIG_TARGET_sunxi_cortexa8_DEVICE_nextthing_chip-pocketchip-ng=y
+EOF
+( cd "$OW_SRC" && make defconfig >/dev/null )
+
+log "writing full OpenWrt .config (cortexa8 + nextthing_chip-pocketchip-ng + packages)"
 cat > "$OW_SRC/.config" <<'EOF'
 CONFIG_TARGET_sunxi=y
 CONFIG_TARGET_sunxi_cortexa8=y
 CONFIG_TARGET_sunxi_cortexa8_DEVICE_nextthing_chip-pocketchip-ng=y
 CONFIG_TARGET_ROOTFS_INITRAMFS=y
 CONFIG_TARGET_INITRAMFS_COMPRESSION_XZ=y
-CONFIG_PACKAGE_kmod-usb-gadget=y
-CONFIG_PACKAGE_kmod-usb-lib-composite=y
-CONFIG_PACKAGE_kmod-usb-gadget-serial=y
-CONFIG_PACKAGE_kmod-usb-gadget-eth=y
-CONFIG_PACKAGE_kmod-usb-gadget-cdc-composite=y
+# NOTE: don't select kmod-usb-gadget-eth / kmod-usb-gadget-serial /
+# kmod-usb-gadget-cdc-composite as PACKAGES even though we want their
+# functionality. Each of those kmods has a KCONFIG line like
+# 'CONFIG_USB_ETH' (no value), which OpenWrt expands to '=m' and
+# OVERRIDES our 'CONFIG_USB_ETH is not set' in sunxi config-6.12.
+# Result: legacy g_ether wins the UDC race over g_cdc and the host
+# sees RNDIS instead of CDC-ECM.
+#
+# Our gadget stack is fully built-in via the sunxi kernel config
+# patches above (USB_LIBCOMPOSITE=y, USB_F_ACM=y, USB_F_ECM=y,
+# USB_CDC_COMPOSITE=y) so we don't need any of these kmod packages.
 CONFIG_PACKAGE_kmod-rtl8723bs=y
 CONFIG_PACKAGE_kmod-backlight-pwm=y
 CONFIG_PACKAGE_kmod-bluetooth=y

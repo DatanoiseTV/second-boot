@@ -306,16 +306,17 @@
 };
 
 /*
- * USB OTG: force peripheral mode so the kernel's gadget stack owns the
- * port unconditionally. With dr_mode = "otg" the SoC picks host vs.
- * peripheral via the ID pin; some PocketCHIP revisions leave that pin
- * floating, which makes enumeration flaky. Pinning to peripheral
- * guarantees /dev/ttyGS0 + USB ethernet on the host machine the moment
- * the kernel comes up. The full-size USB-A receptacle keeps host duties
- * because it sits on the SoC's second USB controller.
+ * USB OTG: leave as 'otg' (matches mainline chip.dts and the only
+ * known-working community PocketCHIP DT, macromorgan/chip-debroot).
+ * Forcing dr_mode = "peripheral" boots on kernel 6.6 but breaks on
+ * 6.12 -- the musb-sunxi driver in 6.12 stops enumerating in
+ * peripheral mode when ID GPIO is also declared in &usbphy. Stick
+ * with OTG and let the kernel detect mode via ID GPIO on PG2; when
+ * a USB host (the Mac) is attached, VBUS comes from the host and ID
+ * floats high, which the driver reads as peripheral mode.
  */
 &usb_otg {
-	dr_mode = "peripheral";
+	dr_mode = "otg";
 	status = "okay";
 };
 
