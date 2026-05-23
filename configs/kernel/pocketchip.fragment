@@ -64,11 +64,17 @@ CONFIG_SND_SUN4I_CODEC=y
 CONFIG_SND_SUN4I_I2S=y
 
 # --- WiFi/BT: RTL8723BS (SDIO combo) ---------------------------------------
-# Driver still lives under drivers/staging in current LTS.
+# Driver still lives under drivers/staging in current LTS. sunxi_defconfig
+# omits the wireless stack, so we pull it in explicitly here.
+CONFIG_NET=y
+CONFIG_WIRELESS=y
+CONFIG_WLAN=y
+CONFIG_WLAN_VENDOR_REALTEK=y
+CONFIG_CFG80211=y
+CONFIG_MAC80211=y
 CONFIG_STAGING=y
+# RTL8723BS depends on m (kernel forces it to be a module).
 CONFIG_RTL8723BS=m
-CONFIG_CFG80211=m
-CONFIG_MAC80211=m
 CONFIG_RFKILL=y
 CONFIG_BT=y
 CONFIG_BT_BREDR=y

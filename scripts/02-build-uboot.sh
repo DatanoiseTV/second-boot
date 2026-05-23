@@ -23,10 +23,19 @@ if compgen -G "$HERE/../patches/uboot/*.patch" > /dev/null; then
     done
 fi
 
-log "configuring u-boot (CHIP_defconfig)"
+log "configuring u-boot (CHIP_defconfig + pocketchip fragment)"
 make -C "$UBOOT_SRC" \
     ARCH="$ARCH" CROSS_COMPILE="$CROSS_COMPILE" \
     CHIP_defconfig
+
+FRAG="$HERE/../configs/uboot/pocketchip.fragment.config"
+if [ -f "$FRAG" ]; then
+    log "applying $FRAG"
+    cat "$FRAG" >> "$UBOOT_SRC/.config"
+    make -C "$UBOOT_SRC" \
+        ARCH="$ARCH" CROSS_COMPILE="$CROSS_COMPILE" \
+        olddefconfig
+fi
 
 log "building u-boot"
 make -C "$UBOOT_SRC" \

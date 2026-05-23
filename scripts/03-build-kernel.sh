@@ -43,8 +43,28 @@ fi
 
 log "applying sunxi_defconfig + pocketchip fragment"
 "${KMAKE[@]}" sunxi_defconfig
-"$LINUX_SRC/scripts/kconfig/merge_config.sh" -m -O "$LINUX_SRC" \
-    "$LINUX_SRC/.config" "$FRAG"
+# Direct-append the fragment to .config. We avoid merge_config.sh
+# because it's been observed to silently drop bool symbols whose parent
+# menus weren't already enabled in the base defconfig (e.g. CONFIG_WLAN).
+cat "$FRAG" >> "$LINUX_SRC/.config"
+
+# If an initramfs cpio is present, bake it into the kernel image. This
+# lets us boot via FEL by staging only zImage + DTB in RAM, no separate
+# initrd argument needed in U-Boot.
+INITRAMFS_CPIO="$ARTIFACTS_DIR/initramfs/initramfs.cpio"
+if [ -f "$INITRAMFS_CPIO" ]; then
+    log "embedding initramfs from $INITRAMFS_CPIO"
+    {
+        echo 'CONFIG_BLK_DEV_INITRD=y'
+        echo 'CONFIG_INITRAMFS_SOURCE="'"$INITRAMFS_CPIO"'"'
+        echo 'CONFIG_INITRAMFS_ROOT_UID=0'
+        echo 'CONFIG_INITRAMFS_ROOT_GID=0'
+        echo '# CONFIG_INITRAMFS_FORCE is not set'
+        echo '# CONFIG_INITRAMFS_COMPRESSION_NONE is not set'
+        echo 'CONFIG_INITRAMFS_COMPRESSION_GZIP=y'
+    } >> "$LINUX_SRC/.config"
+fi
+
 "${KMAKE[@]}" olddefconfig
 
 log "building zImage + DTBs + modules"
