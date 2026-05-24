@@ -262,12 +262,16 @@
 };
 
 /*
- * On-board 4 GiB NAND (Toshiba TC58TEG5DCLTA00). Mainline chip.dts
- * leaves the controller disabled; we enable it with the same hardware
- * ECC mode and partition layout the original NTC firmware uses, so our
- * kernel can read/write the existing UBI rootfs (and NTC's u-boot keeps
- * booting /boot/zImage from it). Partition order matters: rootfs is the
- * 5th partition, so ubi.mtd=4 (in bootargs) targets it.
+ * On-board 4 GiB NAND (Toshiba TC58TEG5DCLTA00), MLC. Mainline cannot
+ * reliably read NTC's factory MLC layout, so we reflash to macromorgan's
+ * proven layout: the rootfs partition is flagged `slc-mode`, which makes
+ * the MTD layer emulate SLC on the MLC chip (uses only the lower page of
+ * each pair) -- immune to paired-page corruption and reliably read/written
+ * by mainline. Partition ORDER fixes the mtd indices:
+ *   mtd0 SPL, mtd1 SPL.backup, mtd2 U-Boot, mtd3 env, mtd4 bootfs,
+ *   mtd5 rootfs (slc-mode)  ->  ubi.mtd=5 root=ubi0:rootfs.
+ * SPL/U-Boot/bootfs stay normal MLC (boot0 has its own BootROM ECC; the
+ * kernel uImage in bootfs is read by u-boot, not the kernel).
  */
 &nfc {
 	pinctrl-names = "default";
@@ -280,19 +284,13 @@
 		reg = <0>;
 		allwinner,rb = <0>;
 		/*
-		 * Match macromorgan/chip-debroot, the proven mainline CHIP
-		 * NAND config:
-		 *  - nand-ecc-maximize: driver picks the strongest BCH that
-		 *    fits the OOB (40-bit/1024 on this 16K-page/1280-OOB chip),
-		 *    matching what NTC's driver used.
-		 *  - nand-on-flash-bbt: read the bad-block table from flash
-		 *    instead of doing a full factory-BBT scan -- the scan HANGS
-		 *    on this Toshiba MLC, which is why our earlier probe stalled
-		 *    (steady LED, no /init).
-		 * The sunxi driver auto-enables the hardware randomizer for MLC.
+		 * macromorgan's gist uses plain hw ECC + on-flash BBT (no
+		 * nand-ecc-maximize). The driver picks the BCH strength from
+		 * the OOB; on-flash-bbt avoids the factory-BBT scan that HANGS
+		 * on this Toshiba MLC. The sunxi driver auto-enables the
+		 * hardware randomizer for MLC.
 		 */
 		nand-ecc-mode = "hw";
-		nand-ecc-maximize;
 		nand-on-flash-bbt;
 
 		partitions {
@@ -304,7 +302,12 @@
 			partition@400000  { label = "SPL.backup"; reg = <0x400000 0x400000>; };
 			partition@800000  { label = "U-Boot";     reg = <0x800000 0x400000>; };
 			partition@c00000  { label = "env";        reg = <0xc00000 0x400000>; };
-			partition@1000000 { label = "rootfs";     reg = <0x1000000 0xff000000>; };
+			partition@1000000 { label = "bootfs";     reg = <0x1000000 0x2000000>; };
+			rootfs@3000000 {
+				label = "rootfs";
+				slc-mode;
+				reg = <0x3000000 0xfd000000>;
+			};
 		};
 	};
 };

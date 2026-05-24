@@ -38,16 +38,21 @@ fi
 
 PAGE_SIZE="${PAGE_SIZE:-16384}"
 OOB_SIZE="${OOB_SIZE:-1280}"
-USABLE_PAGE="${USABLE_PAGE:-$PAGE_SIZE}"
 ERASE_BLOCK="${ERASE_BLOCK:-4194304}"
-ECC_STRENGTH="${ECC_STRENGTH:-40}"
+# boot0/SPL ECC is FIXED by the BootROM and is independent of the data-area
+# ECC (40/1024). The BROM reads the SPL with 64-bit/1024-byte ECC, accessing
+# only the first 4096 "usable" bytes per page, with data scrambling (-s).
+# These match U-Boot's NAND_SUNXI_SPL_ECC_* defaults and the worked example
+# for the matching 16K/1280/4M MLC chip in sunxi-nand-image-builder's help.
+USABLE_PAGE="${USABLE_PAGE:-4096}"
+ECC_STRENGTH="${ECC_STRENGTH:-64}"
 ECC_STEP="${ECC_STEP:-1024}"
 
 [ -f "$SPL_BIN" ] || die "missing $SPL_BIN (run 20-build-uboot-nand.sh)"
 [ -x "$NIB"     ] || die "sunxi-nand-image-builder not built; run 'make misc' in tools/sunxi-tools"
 
-log "wrapping $SPL_BIN with NAND ECC layout"
-log "  page=$PAGE_SIZE oob=$OOB_SIZE eraseblock=$ERASE_BLOCK ecc=$ECC_STRENGTH/$ECC_STEP"
+log "wrapping $SPL_BIN as a boot0 image (BootROM ECC layout)"
+log "  page=$PAGE_SIZE oob=$OOB_SIZE eraseblock=$ERASE_BLOCK usable=$USABLE_PAGE ecc=$ECC_STRENGTH/$ECC_STEP scramble=on"
 
 "$NIB" \
     -c "$ECC_STRENGTH/$ECC_STEP" \
@@ -55,15 +60,15 @@ log "  page=$PAGE_SIZE oob=$OOB_SIZE eraseblock=$ERASE_BLOCK ecc=$ECC_STRENGTH/$
     -o "$OOB_SIZE" \
     -u "$USABLE_PAGE" \
     -e "$ERASE_BLOCK" \
+    -s \
     -b \
     "$SPL_BIN" \
     "$SPL_OUT"
 
 log "boot0 image: $(du -h "$SPL_OUT" | cut -f1) at $SPL_OUT"
 log ""
-log "Flash to NAND with (on the booted PocketCHIP):"
-log "  for o in 0x000000 0x400000 0x800000 0xc00000; do"
-log "      nandwrite -o -O -m \$o /dev/mtd0 $SPL_OUT"
-log "  done"
+log "Flashed by scripts/30-fel-flash-nand.sh via U-Boot:"
+log "  nand write.raw.noverify <addr> 0x0       <pages>"
+log "  nand write.raw.noverify <addr> 0x400000  <pages>"
 log ""
-log "(the four copies are for bad-block resilience -- BootROM tries them in order)"
+log "(two copies, one erase-block apart -- the BootROM tries 0x0 then 0x400000)"

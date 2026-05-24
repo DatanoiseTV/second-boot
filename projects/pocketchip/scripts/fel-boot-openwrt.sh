@@ -26,7 +26,7 @@ DTB="${DTB_BIN:-$REPO/artifacts/openwrt/sun5i-r8-chip-pocketchip-ng.dtb}"
 
 # DDR layout: u-boot lives at 0x4a000000; keep everything well below.
 KIMG_ADDR=0x42000000
-DTB_ADDR=0x43000000
+DTB_ADDR=0x49000000
 
 for f in "$FEL" "$UBOOT" "$KIMG" "$DTB"; do
     [ -e "$f" ] || { echo "missing: $f" >&2; exit 1; }

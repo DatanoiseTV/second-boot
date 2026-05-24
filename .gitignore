@@ -20,3 +20,7 @@ sources/
 *.swo
 tools/libusb/
 projects/pocketchip/tools/libusb
+
+# External reference clones (regenerable; not vendored)
+projects/pocketchip/reference/chip-debroot/
+projects/pocketchip/reference/pocketchip-debian-builder/

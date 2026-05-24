@@ -1,0 +1,43 @@
+diff --git a/common/spl/spl_nand.c b/common/spl/spl_nand.c
+index f3c33ac75..6368e23c0 100644
+--- a/common/spl/spl_nand.c
++++ b/common/spl/spl_nand.c
+@@ -35,13 +35,20 @@ static int spl_nand_load_element(int offset, struct image_header *header)
+ {
+ 	int err;
+ 
++	printf("spl nand off %x\n", offset);
+ 	err = nand_spl_load_image(offset, sizeof(*header), (void *)header);
++	printf("spl nand hdr ret %d magic %08x\n", err, header->ih_magic);
+ 	if (err)
+ 		return err;
+ 
+ 	spl_parse_image_header(header);
+-	return nand_spl_load_image(offset, spl_image.size,
+-				   (void *)(unsigned long)spl_image.load_addr);
++	printf("spl nand img size %x load %lx\n",
++	       spl_image.size, (ulong)spl_image.load_addr);
++	err = nand_spl_load_image(offset, spl_image.size,
++				  (void *)(unsigned long)spl_image.load_addr);
++	printf("spl nand img ret %d\n", err);
++
++	return err;
+ }
+ 
+ int spl_nand_load_image(void)
+diff --git a/drivers/mtd/nand/sunxi_nand_spl.c b/drivers/mtd/nand/sunxi_nand_spl.c
+index 9a1e0f71f..374470bd5 100644
+--- a/drivers/mtd/nand/sunxi_nand_spl.c
++++ b/drivers/mtd/nand/sunxi_nand_spl.c
+@@ -322,8 +322,10 @@ static int nand_read_page(const struct nfc_config *conf, u32 offs,
+ 	val = readl(SUNXI_NFC_BASE + NFC_ECC_ST);
+ 
+ 	/* ECC error detected. */
+-	if (val & 0xffff)
++	if (val & 0xffff) {
++		printf("nand ecc off %x st %08x\n", offs, val);
+ 		return -EIO;
++	}
+ 
+ 	/*
+ 	 * Return 1 if the page is empty.

@@ -1,0 +1,32 @@
+diff --git a/drivers/mtd/nand/sunxi_nand_spl.c b/drivers/mtd/nand/sunxi_nand_spl.c
+index 9a1e0f71f..20f769416 100644
+--- a/drivers/mtd/nand/sunxi_nand_spl.c
++++ b/drivers/mtd/nand/sunxi_nand_spl.c
+@@ -442,6 +442,27 @@ static int nand_detect_config(struct nfc_config *conf, u32 offs, void *dest)
+ 	if (conf->valid)
+ 		return 0;
+ 
++	/*
++	 * PocketCHIP Toshiba 4G MLC NAND images are built with the production
++	 * geometry used by full U-Boot:
++	 *
++	 *   16 KiB pages, 1 KiB ECC steps, ECC40, 5 address cycles, randomized.
++	 *
++	 * The generic SPL detector can mis-detect this boot slot, even though
++	 * full U-Boot reads the same image correctly. The NAND image target using
++	 * this patch is Toshiba-specific, so use the known boot geometry here and
++	 * leave the full U-Boot NAND driver generic.
++	 */
++	conf->addr_cycles = 5;
++	conf->page_size = 16384;
++	conf->ecc_size = 1024;
++	conf->ecc_strength = 4;
++	conf->randomize = true;
++	conf->nseeds = ARRAY_SIZE(random_seed);
++	nand_apply_config(conf);
++	conf->valid = true;
++	return 0;
++
+ 	/*
+ 	 * Modern NANDs are more likely than legacy ones, so we start testing
+ 	 * with 5 address cycles.
