@@ -1,0 +1,1143 @@
+diff --git a/board/BuR/common/common.c b/board/BuR/common/common.c
+index 441465c00..de78a759c 100644
+--- a/board/BuR/common/common.c
++++ b/board/BuR/common/common.c
+@@ -261,7 +261,7 @@ static int load_devicetree(void)
+ #ifdef CONFIG_NAND
+ 	dtbsize = 0x20000;
+ 	rc = nand_read_skip_bad(&nand_info[0], 0x40000, (size_t *)&dtbsize,
+-				NULL, 0x20000, (u_char *)dtbaddr);
++				NULL, 0x20000, (u_char *)dtbaddr, 0);
+ #else
+ 	char *dtbname = getenv("dtb");
+ 	char *dtbdev = getenv("dtbdev");
+diff --git a/common/cmd_bootm.c b/common/cmd_bootm.c
+index 48738ac60..f7bb9d6d3 100644
+--- a/common/cmd_bootm.c
++++ b/common/cmd_bootm.c
+@@ -387,7 +387,7 @@ static int nand_imls_legacyimage(nand_info_t *nand, int nand_dev, loff_t off,
+ 	}
+ 
+ 	ret = nand_read_skip_bad(nand, off, &len,
+-			imgdata);
++			imgdata, 0);
+ 	if (ret < 0 && ret != -EUCLEAN) {
+ 		free(imgdata);
+ 		return ret;
+@@ -428,7 +428,7 @@ static int nand_imls_fitimage(nand_info_t *nand, int nand_dev, loff_t off,
+ 	}
+ 
+ 	ret = nand_read_skip_bad(nand, off, &len,
+-			imgdata);
++			imgdata, 0);
+ 	if (ret < 0 && ret != -EUCLEAN) {
+ 		free(imgdata);
+ 		return ret;
+diff --git a/common/cmd_nand.c b/common/cmd_nand.c
+index 8b03f4b15..a54d3e4b6 100644
+--- a/common/cmd_nand.c
++++ b/common/cmd_nand.c
+@@ -365,6 +365,43 @@ static void adjust_size_for_badblocks(loff_t *size, loff_t offset, int dev)
+ 	}
+ }
+ 
++static void adjust_size_for_slc_mode(loff_t *size, loff_t *maxsize,
++				     loff_t offset, int dev)
++{
++	/* We grab the nand info object here fresh because this is usually
++	 * called after arg_off_size() which can change the value of dev.
++	 */
++	nand_info_t *nand = &nand_info[dev];
++	int badblocks = 0, adjerasesize;
++	uint64_t adjchipsize = nand->size;
++	loff_t maxoffset;
++
++	do_div(adjchipsize, nand->slc_mode_ratio);
++
++	maxoffset = *size + offset;
++
++	if (*size + offset > adjchipsize)
++		*size = adjchipsize - offset;
++
++	if (*maxsize + offset > adjchipsize)
++		*size = adjchipsize - offset;
++
++	adjerasesize = nand->erasesize / nand->slc_mode_ratio;
++
++	/* count badblocks in NAND from offset to offset + size */
++	for (; offset < maxoffset; offset += nand->erasesize) {
++		if (nand_block_isbad(nand, offset))
++			badblocks++;
++	}
++
++	/* adjust size if any bad blocks found */
++	if (badblocks) {
++		*size -= badblocks * adjerasesize;
++		printf("size adjusted to 0x%llx (%d bad blocks)\n",
++		       (unsigned long long)*size, badblocks);
++	}
++}
++
+ static int do_nand(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+ {
+ 	int i, ret = 0;
+@@ -546,6 +583,7 @@ static int do_nand(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+ 		int read;
+ 		int raw = 0;
+ 		int no_verify = 0;
++		int slc_mode = 0;
+ 
+ 		if (argc < 4)
+ 			goto usage;
+@@ -556,6 +594,10 @@ static int do_nand(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+ 		printf("\nNAND %s: ", read ? "read" : "write");
+ 
+ 		s = strchr(cmd, '.');
++		if (s && !strncmp(s, ".slc-mode", sizeof(".slc-mode") - 1)) {
++			slc_mode = 1;
++			s = strchr(s + 1, '.');
++		}
+ 
+ 		if (s && !strncmp(s, ".raw", 4)) {
+ 			raw = 1;
+@@ -595,8 +637,15 @@ static int do_nand(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+ 				return 1;
+ 
+ 			/* size is unspecified */
+-			if (argc < 5)
+-				adjust_size_for_badblocks(&size, off, dev);
++			if (argc < 5) {
++				if (slc_mode)
++					adjust_size_for_slc_mode(&size,
++								 &maxsize, off,
++								 dev);
++				else
++					adjust_size_for_badblocks(&size, off,
++								  dev);
++			}
+ 			rwsize = size;
+ 		}
+ 
+@@ -607,12 +656,14 @@ static int do_nand(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+ 			if (read)
+ 				ret = nand_read_skip_bad(nand, off, &rwsize,
+ 							 NULL, maxsize,
+-							 (u_char *)addr);
++							 (u_char *)addr,
++							 (slc_mode ? WITH_SLC_MODE : 0));
+ 			else
+ 				ret = nand_write_skip_bad(nand, off, &rwsize,
+ 							  NULL, maxsize,
+ 							  (u_char *)addr,
+-							  WITH_WR_VERIFY);
++							  WITH_WR_VERIFY |
++							  (slc_mode ? WITH_SLC_MODE : 0));
+ #ifdef CONFIG_CMD_NAND_TRIMFFS
+ 		} else if (!strcmp(s, ".trimffs")) {
+ 			if (read) {
+@@ -621,7 +672,8 @@ static int do_nand(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+ 			}
+ 			ret = nand_write_skip_bad(nand, off, &rwsize, NULL,
+ 						maxsize, (u_char *)addr,
+-						WITH_DROP_FFS | WITH_WR_VERIFY);
++						WITH_DROP_FFS | WITH_WR_VERIFY |
++						(slc_mode ? WITH_SLC_MODE : 0));
+ #endif
+ 		} else if (!strcmp(s, ".oob")) {
+ 			/* out-of-band data */
+@@ -757,15 +809,18 @@ usage:
+ static char nand_help_text[] =
+ 	"info - show available NAND devices\n"
+ 	"nand device [dev] - show or set current device\n"
+-	"nand read - addr off|partition size\n"
+-	"nand write - addr off|partition size\n"
++	"nand read[.slc-mode] - addr off|partition size\n"
++	"nand write[.slc-mode] - addr off|partition size\n"
++	"    With '.slc-mode, the operation is done in SLC mode\n"
++	"    'size' includes skipped bad blocks.\n"
+ 	"    read/write 'size' bytes starting at offset 'off'\n"
+ 	"    to/from memory address 'addr', skipping bad blocks.\n"
+ 	"nand read.raw - addr off|partition [count]\n"
+ 	"nand write.raw[.noverify] - addr off|partition [count]\n"
+ 	"    Use read.raw/write.raw to avoid ECC and access the flash as-is.\n"
+ #ifdef CONFIG_CMD_NAND_TRIMFFS
+-	"nand write.trimffs - addr off|partition size\n"
++	"nand write[.slc-mode].trimffs - addr off|partition size\n"
++	"    With '.slc-mode, the operation is done in SLC mode\n"
+ 	"    write 'size' bytes starting at offset 'off' from memory address\n"
+ 	"    'addr', skipping bad blocks and dropping any pages at the end\n"
+ 	"    of eraseblocks that contain only 0xFF\n"
+@@ -831,7 +886,7 @@ static int nand_load_image(cmd_tbl_t *cmdtp, nand_info_t *nand,
+ 
+ 	cnt = nand->writesize;
+ 	r = nand_read_skip_bad(nand, offset, &cnt, NULL, nand->size,
+-			(u_char *)addr);
++			(u_char *)addr, 0);
+ 	if (r) {
+ 		puts("** Read error\n");
+ 		bootstage_error(BOOTSTAGE_ID_NAND_HDR_READ);
+@@ -866,7 +921,7 @@ static int nand_load_image(cmd_tbl_t *cmdtp, nand_info_t *nand,
+ 	bootstage_mark(BOOTSTAGE_ID_NAND_TYPE);
+ 
+ 	r = nand_read_skip_bad(nand, offset, &cnt, NULL, nand->size,
+-			(u_char *)addr);
++			(u_char *)addr, 0);
+ 	if (r) {
+ 		puts("** Read error\n");
+ 		bootstage_error(BOOTSTAGE_ID_NAND_READ);
+diff --git a/common/env_nand.c b/common/env_nand.c
+index b32eeac9d..e977960f8 100644
+--- a/common/env_nand.c
++++ b/common/env_nand.c
+@@ -260,7 +260,7 @@ static int readenv(size_t offset, u_char *buf)
+ 			char_ptr = &buf[amount_loaded];
+ 			if (nand_read_skip_bad(&nand_info[0], offset,
+ 					       &len, NULL,
+-					       nand_info[0].size, char_ptr))
++					       nand_info[0].size, char_ptr, 0))
+ 				return 1;
+ 
+ 			offset += blocksize;
+diff --git a/common/fb_nand.c b/common/fb_nand.c
+index b62784373..752320f21 100644
+--- a/common/fb_nand.c
++++ b/common/fb_nand.c
+@@ -141,6 +141,65 @@ static int _fb_nand_write(nand_info_t *nand, struct part_info *part,
+ 				   buffer, flags);
+ }
+ 
++static int _fb_nand_write_slc_layout(nand_info_t *nand, struct part_info *part,
++				     void *buffer, unsigned int offset,
++				     unsigned int length, size_t *used)
++{
++	unsigned int blocksize = nand->erasesize;
++	unsigned int adjblocksize = blocksize / nand->slc_mode_ratio;
++	unsigned int start = offset;
++	u8 *p_buffer = buffer;
++	size_t left = length;
++	int ret;
++
++	if (!nand->slc_mode_ratio)
++		return -EINVAL;
++
++	while (left > 0) {
++		unsigned int block_offset;
++		unsigned int page_offset;
++		unsigned int page;
++		unsigned int phys_page;
++		unsigned int phys_offset;
++		size_t written = nand->writesize;
++
++		block_offset = offset & (blocksize - 1);
++		if (block_offset >= adjblocksize) {
++			offset += blocksize - block_offset;
++			continue;
++		}
++
++		if (nand_block_isbad(nand, offset & ~(blocksize - 1))) {
++			offset += blocksize - block_offset;
++			continue;
++		}
++
++		page_offset = block_offset & (nand->writesize - 1);
++		page = block_offset / nand->writesize;
++		phys_page = page ? (page * nand->slc_mode_ratio) - 1 : 0;
++		phys_offset = (offset & ~(blocksize - 1)) +
++			      (phys_page * nand->writesize) + page_offset;
++		written = min(left, (size_t)(nand->writesize - page_offset));
++
++		ret = nand_write_skip_bad(nand, phys_offset, &written, NULL,
++					  part->size - (offset - part->offset),
++					  p_buffer, WITH_WR_VERIFY);
++		if (ret < 0)
++			return ret;
++
++		p_buffer += written;
++		left -= written;
++		offset += written;
++
++		block_offset = offset & (blocksize - 1);
++		if (block_offset >= adjblocksize)
++			offset += blocksize - block_offset;
++	}
++
++	*used = offset - start;
++	return 0;
++}
++
+ static int fb_nand_sparse_write(struct sparse_storage *storage,
+ 				void *priv,
+ 				unsigned int offset,
+@@ -155,6 +214,22 @@ static int fb_nand_sparse_write(struct sparse_storage *storage,
+ 
+ 	printf("Writing at offset 0x%llx\n", ofs);
+ 
++	if (!strcmp(sparse->part->name, "UBI")) {
++		size_t used = 0;
++		unsigned int length = size * storage->block_sz;
++
++		ret = _fb_nand_write_slc_layout(sparse->nand, sparse->part,
++						data, ofs, length, &used);
++		if (ret < 0) {
++			printf("Failed to write sparse UBI chunk\n");
++			return ret;
++		}
++
++		*new_offset = offset + (used / storage->block_sz);
++		printf("New offset 0x%x\n", *new_offset * storage->block_sz);
++		return size;
++	}
++
+ 	for (i = 0; i < size; i++) {
+ 		size_t used;
+ 
+diff --git a/common/splash_source.c b/common/splash_source.c
+index a09dd4b46..c9fbaa050 100644
+--- a/common/splash_source.c
++++ b/common/splash_source.c
+@@ -48,7 +48,7 @@ static int splash_nand_read_raw(u32 bmp_load_addr, int offset, size_t read_size)
+ 	return nand_read_skip_bad(&nand_info[nand_curr_device], offset,
+ 				  &read_size, NULL,
+ 				  nand_info[nand_curr_device].size,
+-				  (u_char *)bmp_load_addr);
++				  (u_char *)bmp_load_addr, 0);
+ }
+ #else
+ static int splash_nand_read_raw(u32 bmp_load_addr, int offset, size_t read_size)
+diff --git a/drivers/dfu/dfu_nand.c b/drivers/dfu/dfu_nand.c
+index a9754922e..b099f8765 100644
+--- a/drivers/dfu/dfu_nand.c
++++ b/drivers/dfu/dfu_nand.c
+@@ -48,7 +48,7 @@ static int nand_block_op(enum dfu_op op, struct dfu_entity *dfu,
+ 
+ 	if (op == DFU_OP_READ) {
+ 		ret = nand_read_skip_bad(nand, start, &count, &actual,
+-				lim, buf);
++				lim, buf, 0);
+ 	} else {
+ 		nand_erase_options_t opts;
+ 
+diff --git a/drivers/mtd/mtdcore.c b/drivers/mtd/mtdcore.c
+index ffb75f800..0c506c6cc 100644
+--- a/drivers/mtd/mtdcore.c
++++ b/drivers/mtd/mtdcore.c
+@@ -509,6 +509,9 @@ int add_mtd_device(struct mtd_info *mtd)
+ 	mtd->erasesize_mask = (1 << mtd->erasesize_shift) - 1;
+ 	mtd->writesize_mask = (1 << mtd->writesize_shift) - 1;
+ 
++	if (!mtd->slc_mode_ratio)
++		mtd->slc_mode_ratio = 1;
++
+ 	/* Some chips always power up locked. Unlock them now */
+ 	if ((mtd->flags & MTD_WRITEABLE) && (mtd->flags & MTD_POWERUP_LOCK)) {
+ 		error = mtd_unlock(mtd, 0, mtd->size);
+@@ -988,6 +991,42 @@ unsigned long mtd_get_unmapped_area(struct mtd_info *mtd, unsigned long len,
+ }
+ EXPORT_SYMBOL_GPL(mtd_get_unmapped_area);
+ 
++static int mtd_slc_mode_check(struct mtd_info *mtd, loff_t start, size_t len)
++{
++	uint32_t blkoff;
++	size_t adjlen;
++	loff_t end;
++
++	/*
++	 * We have two solutions when the block offset exceed the SLC mode
++	 * erasesize:
++	 * - start writing on the next block
++	 * - complain about invalid parameter
++	 *
++	 * We chose the second solution since SLC mode users should be
++	 * aware of the SLC mode constraints.
++	 */
++	blkoff = start & mtd->erasesize_mask;
++	if (blkoff >= (mtd->erasesize / mtd->slc_mode_ratio))
++		return -EINVAL;
++
++	/*
++	 * Verify that we are not exceeding the MTD device size.
++	 * Each writesize aligned chunk is taking mtd->slc_mode_ratio more
++	 * space in SLC mode.
++	 */
++	end = start & ~mtd->writesize_mask;
++	adjlen = len + (start & mtd->writesize_mask);
++	adjlen = ((adjlen / mtd->writesize) * mtd->slc_mode_ratio) +
++		 (adjlen % mtd->writesize);
++	end += adjlen;
++	blkoff = end & mtd->writesize_mask;
++	if (end > mtd->size)
++		return -EINVAL;
++
++	return 0;
++}
++
+ int mtd_read(struct mtd_info *mtd, loff_t from, size_t len, size_t *retlen,
+ 	     u_char *buf)
+ {
+@@ -1012,6 +1051,38 @@ int mtd_read(struct mtd_info *mtd, loff_t from, size_t len, size_t *retlen,
+ }
+ EXPORT_SYMBOL_GPL(mtd_read);
+ 
++int mtd_read_slc_mode(struct mtd_info *mtd, loff_t from, size_t len,
++		      size_t *retlen, u_char *buf)
++{
++	int ret_code;
++	*retlen = 0;
++
++	if (!mtd->_read_slc_mode)
++		return mtd_read(mtd, from, len, retlen, buf);
++
++	if (from < 0 || from >= mtd->size ||
++	    mtd_slc_mode_check(mtd, from, len))
++		return -EINVAL;
++
++	if (!len)
++		return 0;
++
++	/*
++	 * In the absence of an error, drivers return a non-negative integer
++	 * representing the maximum number of bitflips that were corrected on
++	 * any one ecc region (if applicable; zero otherwise).
++	 */
++	ret_code = mtd->_read_slc_mode(mtd, from, len, retlen, buf);
++	if (unlikely(ret_code < 0))
++		return ret_code;
++
++	if (mtd->ecc_strength == 0)
++		return 0;	/* device lacks ecc */
++
++	return ret_code >= mtd->bitflip_threshold ? -EUCLEAN : 0;
++}
++EXPORT_SYMBOL_GPL(mtd_read_slc_mode);
++
+ int mtd_write(struct mtd_info *mtd, loff_t to, size_t len, size_t *retlen,
+ 	      const u_char *buf)
+ {
+@@ -1026,6 +1097,27 @@ int mtd_write(struct mtd_info *mtd, loff_t to, size_t len, size_t *retlen,
+ }
+ EXPORT_SYMBOL_GPL(mtd_write);
+ 
++int mtd_write_slc_mode(struct mtd_info *mtd, loff_t to, size_t len,
++		       size_t *retlen, const u_char *buf)
++{
++	if (!mtd->_write_slc_mode)
++		return mtd_write(mtd, to, len, retlen, buf);
++
++	*retlen = 0;
++
++	if (to < 0 || to >= mtd->size || mtd_slc_mode_check(mtd, to, len))
++		return -EINVAL;
++
++	if (!(mtd->flags & MTD_WRITEABLE))
++		return -EROFS;
++
++	if (!len)
++		return 0;
++
++	return mtd->_write_slc_mode(mtd, to, len, retlen, buf);
++}
++EXPORT_SYMBOL_GPL(mtd_write_slc_mode);
++
+ /*
+  * In blackbox flight recorder like scenarios we want to make successful writes
+  * in interrupt context. panic_write() is only intended to be called when its
+diff --git a/drivers/mtd/mtdpart.c b/drivers/mtd/mtdpart.c
+index 404331eee..3b5074466 100644
+--- a/drivers/mtd/mtdpart.c
++++ b/drivers/mtd/mtdpart.c
+@@ -101,6 +101,25 @@ static int part_read(struct mtd_info *mtd, loff_t from, size_t len,
+ 	return res;
+ }
+ 
++static int part_read_slc_mode(struct mtd_info *mtd, loff_t from, size_t len,
++			      size_t *retlen, u_char *buf)
++{
++	struct mtd_part *part = PART(mtd);
++	struct mtd_ecc_stats stats;
++	int res;
++
++	stats = part->master->ecc_stats;
++	res = part->master->_read_slc_mode(part->master, from + part->offset,
++					   len, retlen, buf);
++	if (unlikely(mtd_is_eccerr(res)))
++		mtd->ecc_stats.failed +=
++			part->master->ecc_stats.failed - stats.failed;
++	else
++		mtd->ecc_stats.corrected +=
++			part->master->ecc_stats.corrected - stats.corrected;
++	return res;
++}
++
+ #ifndef __UBOOT__
+ static int part_point(struct mtd_info *mtd, loff_t from, size_t len,
+ 		size_t *retlen, void **virt, resource_size_t *phys)
+@@ -209,6 +228,14 @@ static int part_write(struct mtd_info *mtd, loff_t to, size_t len,
+ 				    retlen, buf);
+ }
+ 
++static int part_write_slc_mode(struct mtd_info *mtd, loff_t to, size_t len,
++			       size_t *retlen, const u_char *buf)
++{
++	struct mtd_part *part = PART(mtd);
++	return part->master->_write_slc_mode(part->master, to + part->offset,
++					     len, retlen, buf);
++}
++
+ static int part_panic_write(struct mtd_info *mtd, loff_t to, size_t len,
+ 		size_t *retlen, const u_char *buf)
+ {
+@@ -408,6 +435,7 @@ static struct mtd_part *allocate_partition(struct mtd_info *master,
+ 	slave->mtd.oobavail = master->oobavail;
+ 	slave->mtd.subpage_sft = master->subpage_sft;
+ 	slave->mtd.pairing = master->pairing;
++	slave->mtd.slc_mode_ratio = master->slc_mode_ratio;
+ 
+ 	slave->mtd.name = name;
+ 	slave->mtd.owner = master->owner;
+@@ -423,6 +451,11 @@ static struct mtd_part *allocate_partition(struct mtd_info *master,
+ 	slave->mtd._read = part_read;
+ 	slave->mtd._write = part_write;
+ 
++	if (master->_read_slc_mode)
++		slave->mtd._read_slc_mode = part_read_slc_mode;
++	if (master->_write_slc_mode)
++		slave->mtd._write_slc_mode = part_write_slc_mode;
++
+ 	if (master->_panic_write)
+ 		slave->mtd._panic_write = part_panic_write;
+ 
+diff --git a/drivers/mtd/nand/nand_base.c b/drivers/mtd/nand/nand_base.c
+index 56edb4c4d..5dd7bcf8e 100644
+--- a/drivers/mtd/nand/nand_base.c
++++ b/drivers/mtd/nand/nand_base.c
+@@ -739,6 +739,8 @@ static void nand_command_lp(struct mtd_info *mtd, unsigned int command,
+ 			chip->cmd_ctrl(mtd, column >> 8, ctrl);
+ 		}
+ 		if (page_addr != -1) {
++			if (chip->slc_mode && chip->fix_page)
++				chip->fix_page(mtd, &page_addr);
+ 			chip->cmd_ctrl(mtd, page_addr, ctrl);
+ 			chip->cmd_ctrl(mtd, page_addr >> 8,
+ 				       NAND_NCE | NAND_ALE);
+@@ -1476,6 +1478,34 @@ static int nand_setup_read_retry(struct mtd_info *mtd, int retry_mode)
+ 	return chip->setup_read_retry(mtd, retry_mode);
+ }
+ 
++static void nand_set_slc_mode(struct mtd_info *mtd, bool enable)
++{
++	struct nand_chip *chip = mtd->priv;
++
++	if (!chip->set_slc_mode)
++		return;
++
++	chip->pagebuf = -1;
++	chip->set_slc_mode(mtd, enable);
++}
++
++static int nand_slc_mode_adjust_page(struct mtd_info *mtd, int page)
++{
++	struct nand_chip *chip = mtd->priv;
++	int npagesperblk = mtd->erasesize >> chip->page_shift;
++	int pageinblk;
++
++	if (!chip->slc_mode)
++		return page;
++
++	npagesperblk = mtd->erasesize >> chip->page_shift;
++	pageinblk = page % npagesperblk;
++	if (pageinblk * mtd->slc_mode_ratio >= npagesperblk)
++		page += npagesperblk - pageinblk;
++
++	return page;
++}
++
+ /**
+  * nand_do_read_ops - [INTERN] Read data with ECC
+  * @mtd: MTD device structure
+@@ -1505,6 +1535,7 @@ static int nand_do_read_ops(struct mtd_info *mtd, loff_t from,
+ 	chip->select_chip(mtd, chipnr);
+ 
+ 	realpage = (int)(from >> chip->page_shift);
++	realpage = nand_slc_mode_adjust_page(mtd, realpage);
+ 	page = realpage & chip->pagemask;
+ 
+ 	col = (int)(from & (mtd->writesize - 1));
+@@ -1513,6 +1544,8 @@ static int nand_do_read_ops(struct mtd_info *mtd, loff_t from,
+ 	oob = ops->oobbuf;
+ 	oob_required = oob ? 1 : 0;
+ 
++	nand_set_slc_mode(mtd, chip->slc_mode);
++
+ 	while (1) {
+ 		unsigned int ecc_failures = mtd->ecc_stats.failed;
+ 
+@@ -1626,6 +1659,7 @@ read_retry:
+ 			if (ret < 0)
+ 				break;
+ 			retry_mode = 0;
++			nand_set_slc_mode(mtd, chip->slc_mode);
+ 		}
+ 
+ 		if (!readlen)
+@@ -1635,15 +1669,19 @@ read_retry:
+ 		col = 0;
+ 		/* Increment page address */
+ 		realpage++;
++		realpage = nand_slc_mode_adjust_page(mtd, realpage);
+ 
+ 		page = realpage & chip->pagemask;
+ 		/* Check, if we cross a chip boundary */
+ 		if (!page) {
+ 			chipnr++;
++			nand_set_slc_mode(mtd, false);
+ 			chip->select_chip(mtd, -1);
+ 			chip->select_chip(mtd, chipnr);
++			nand_set_slc_mode(mtd, chip->slc_mode);
+ 		}
+ 	}
++	nand_set_slc_mode(mtd, false);
+ 	chip->select_chip(mtd, -1);
+ 
+ 	ops->retlen = ops->len - (size_t) readlen;
+@@ -1686,6 +1724,26 @@ static int nand_read(struct mtd_info *mtd, loff_t from, size_t len,
+ 	return ret;
+ }
+ 
++static int nand_read_slc_mode(struct mtd_info *mtd, loff_t from, size_t len,
++			      size_t *retlen, uint8_t *buf)
++{
++	struct mtd_oob_ops ops;
++	struct nand_chip *chip = mtd->priv;
++	int ret;
++
++	nand_get_device(mtd, FL_READING);
++	memset(&ops, 0, sizeof(ops));
++	ops.len = len;
++	ops.datbuf = buf;
++	ops.mode = MTD_OPS_PLACE_OOB;
++	chip->slc_mode = true;
++	ret = nand_do_read_ops(mtd, from, &ops);
++	chip->slc_mode = false;
++	*retlen = ops.retlen;
++	nand_release_device(mtd);
++	return ret;
++}
++
+ /**
+  * nand_read_oob_std - [REPLACEABLE] the most common OOB data read function
+  * @mtd: mtd info structure
+@@ -2378,6 +2436,7 @@ static int nand_do_write_ops(struct mtd_info *mtd, loff_t to,
+ 	}
+ 
+ 	realpage = (int)(to >> chip->page_shift);
++	realpage = nand_slc_mode_adjust_page(mtd, realpage);
+ 	page = realpage & chip->pagemask;
+ 	blockmask = (1 << (chip->phys_erase_shift - chip->page_shift)) - 1;
+ 
+@@ -2392,6 +2451,7 @@ static int nand_do_write_ops(struct mtd_info *mtd, loff_t to,
+ 		goto err_out;
+ 	}
+ 
++	nand_set_slc_mode(mtd, chip->slc_mode);
+ 	while (1) {
+ 		int bytes = mtd->writesize;
+ 		int cached = writelen > bytes && page != blockmask;
+@@ -2439,13 +2499,16 @@ static int nand_do_write_ops(struct mtd_info *mtd, loff_t to,
+ 		column = 0;
+ 		buf += bytes;
+ 		realpage++;
++		realpage = nand_slc_mode_adjust_page(mtd, realpage);
+ 
+ 		page = realpage & chip->pagemask;
+ 		/* Check, if we cross a chip boundary */
+ 		if (!page) {
+ 			chipnr++;
++			nand_set_slc_mode(mtd, false);
+ 			chip->select_chip(mtd, -1);
+ 			chip->select_chip(mtd, chipnr);
++			nand_set_slc_mode(mtd, chip->slc_mode);
+ 		}
+ 	}
+ 
+@@ -2454,6 +2517,7 @@ static int nand_do_write_ops(struct mtd_info *mtd, loff_t to,
+ 		ops->oobretlen = ops->ooblen;
+ 
+ err_out:
++	nand_set_slc_mode(mtd, false);
+ 	chip->select_chip(mtd, -1);
+ 	return ret;
+ }
+@@ -2520,6 +2584,26 @@ static int nand_write(struct mtd_info *mtd, loff_t to, size_t len,
+ 	return ret;
+ }
+ 
++static int nand_write_slc_mode(struct mtd_info *mtd, loff_t to, size_t len,
++			       size_t *retlen, const uint8_t *buf)
++{
++	struct mtd_oob_ops ops;
++	struct nand_chip *chip = mtd->priv;
++	int ret;
++
++	nand_get_device(mtd, FL_WRITING);
++	memset(&ops, 0, sizeof(ops));
++	ops.len = len;
++	ops.datbuf = (uint8_t *)buf;
++	ops.mode = MTD_OPS_PLACE_OOB;
++	chip->slc_mode = true;
++	ret = nand_do_write_ops(mtd, to, &ops);
++	chip->slc_mode = false;
++	*retlen = ops.retlen;
++	nand_release_device(mtd);
++	return ret;
++}
++
+ /**
+  * nand_do_write_oob - [MTD Interface] NAND write out-of-band
+  * @mtd: MTD device structure
+@@ -4290,6 +4374,11 @@ int nand_scan_tail(struct mtd_info *mtd)
+ 	mtd->_block_markbad = nand_block_markbad;
+ 	mtd->writebufsize = mtd->writesize;
+ 
++	if (chip->set_slc_mode) {
++		mtd->_read_slc_mode = nand_read_slc_mode;
++		mtd->_write_slc_mode = nand_write_slc_mode;
++		mtd->slc_mode_ratio = chip->bits_per_cell;
++	}
+ 	/* propagate ecc info to mtd_info */
+ 	mtd->ecclayout = ecc->layout;
+ 	mtd->ecc_strength = ecc->strength;
+diff --git a/drivers/mtd/nand/nand_hynix.c b/drivers/mtd/nand/nand_hynix.c
+index 032083651..50630c7d2 100644
+--- a/drivers/mtd/nand/nand_hynix.c
++++ b/drivers/mtd/nand/nand_hynix.c
+@@ -198,6 +198,14 @@ struct hq27_rr_table {
+ 
+ #define H27Q_RR_TABLE_NSETS		8
+ 
++static void h27q_set_slc_mode(struct mtd_info *mtd, bool enable)
++{
++	struct nand_chip *chip = mtd->priv;
++	u8 cmd = enable ? 0xbf : 0xbe;
++
++	chip->cmdfunc(mtd, cmd, -1, -1);
++}
++
+ static int h27q_rr_init(struct mtd_info *mtd, const struct hq27_rr_table *info)
+ {
+ 	struct nand_chip *chip = mtd->priv;
+@@ -317,6 +325,7 @@ static int h27q_init(struct mtd_info *mtd, const uint8_t *id)
+ 
+ 	chip->manuf_priv = hynix;
+ 	chip->manuf_cleanup = h27_cleanup;
++	chip->set_slc_mode = h27q_set_slc_mode;
+ 
+ 	for (i = 0; i < ARRAY_SIZE(hq27_rr_tables); i++) {
+ 		ret = h27q_rr_init(mtd, &hq27_rr_tables[i]);
+diff --git a/drivers/mtd/nand/nand_toshiba.c b/drivers/mtd/nand/nand_toshiba.c
+index 1afc7176d..1a8db53e1 100644
+--- a/drivers/mtd/nand/nand_toshiba.c
++++ b/drivers/mtd/nand/nand_toshiba.c
+@@ -15,6 +15,24 @@
+ #include <common.h>
+ #include <linux/mtd/nand.h>
+ 
++static void toshiba_set_slc_mode(struct mtd_info *mtd, bool enable)
++{
++}
++
++static void toshiba_slc_mode_fix_page(struct mtd_info *mtd, int *page)
++{
++	int relpage = *page & 0x7f;
++	int newpage;
++
++	if (!relpage)
++		return;
++
++	relpage = (relpage * 2) - 1;
++	newpage = (*page & ~0xff) | relpage;
++
++	*page = newpage;
++}
++
+ static u8 tc58teg_read_retry_regs[] = {
+ 	0x4, 0x5, 0x6, 0x7, 0xd
+ };
+@@ -57,6 +75,8 @@ static int tc58teg_init(struct mtd_info *mtd, const uint8_t *id)
+ {
+ 	struct nand_chip *chip = mtd->priv;
+ 
++	chip->set_slc_mode = toshiba_set_slc_mode;
++	chip->fix_page = toshiba_slc_mode_fix_page;
+ 	chip->setup_read_retry = tc58teg_setup_read_retry;
+ 	chip->read_retries = 10;
+ 	chip->options |= NAND_NEED_SCRAMBLING;
+diff --git a/drivers/mtd/nand/nand_util.c b/drivers/mtd/nand/nand_util.c
+index 248169af3..bffbaf9a1 100644
+--- a/drivers/mtd/nand/nand_util.c
++++ b/drivers/mtd/nand/nand_util.c
+@@ -408,12 +408,25 @@ int nand_unlock(struct mtd_info *mtd, loff_t start, size_t length,
+  *        -1 if the image does not fit
+  */
+ static int check_skip_len(nand_info_t *nand, loff_t offset, size_t length,
+-		size_t *used)
++		size_t *used, int flags)
+ {
+-	size_t len_excl_bad = 0;
+-	int ret = 0;
++	int adjerasesize = nand->erasesize;
++	size_t adjlength, len_excl_bad = 0;
++	int nblocks, ret = 0;
++	u64 tmp = offset;
++
++	if (flags & WITH_SLC_MODE)
++		adjerasesize /= nand->slc_mode_ratio;
++
++	adjlength = adjerasesize - do_div(tmp, adjerasesize);
++	if (adjlength > length)
++		adjlength = length;
+ 
+-	while (len_excl_bad < length) {
++	nblocks = (length - adjlength) / adjerasesize;
++	adjlength += (length - adjlength) % adjerasesize;
++	adjlength += nblocks * nand->erasesize;
++
++	while (len_excl_bad < adjlength) {
+ 		size_t block_len, block_off;
+ 		loff_t block_start;
+ 
+@@ -434,8 +447,13 @@ static int check_skip_len(nand_info_t *nand, loff_t offset, size_t length,
+ 	}
+ 
+ 	/* If the length is not a multiple of block_len, adjust. */
+-	if (len_excl_bad > length)
+-		*used -= (len_excl_bad - length);
++	if (len_excl_bad > adjlength) {
++		*used -= (len_excl_bad - adjlength);
++		offset += (len_excl_bad - adjlength);
++	}
++
++	if ((offset & nand->erasesize_mask) >= adjerasesize)
++		*used += nand->erasesize - (offset & nand->erasesize_mask);
+ 
+ 	return ret;
+ }
+@@ -502,6 +520,24 @@ int nand_verify_page_oob(nand_info_t *nand, struct mtd_oob_ops *ops, loff_t ofs)
+ 	return rval ? -EIO : 0;
+ }
+ 
++static int nand_read_with_flags(nand_info_t *info, loff_t ofs, size_t *len,
++				u_char *buf, int flags)
++{
++	if (flags & WITH_SLC_MODE)
++		return nand_read_slc_mode(info, ofs, len, buf);
++
++	return nand_read(info, ofs, len, buf);
++}
++
++static int nand_write_with_flags(nand_info_t *info, loff_t ofs, size_t *len,
++				 u_char *buf, int flags)
++{
++	if (flags & WITH_SLC_MODE)
++		return nand_write_slc_mode(info, ofs, len, buf);
++
++	return nand_write(info, ofs, len, buf);
++}
++
+ /**
+  * nand_verify:
+  *
+@@ -516,26 +552,33 @@ int nand_verify_page_oob(nand_info_t *nand, struct mtd_oob_ops *ops, loff_t ofs)
+  * @param buf		buffer to read from
+  * @return		0 in case of success
+  */
+-int nand_verify(nand_info_t *nand, loff_t ofs, size_t len, u_char *buf)
++int nand_verify(nand_info_t *nand, loff_t ofs, size_t len, u_char *buf,
++		int flags)
+ {
+ 	int rval = 0;
+ 	size_t verofs;
+ 	size_t verlen = nand->writesize;
+ 	uint8_t *verbuf = memalign(ARCH_DMA_MINALIGN, verlen);
++	int adjblocksize = nand->erasesize / nand->slc_mode_ratio;
+ 
+ 	if (!verbuf)
+ 		return -ENOMEM;
+ 
+ 	/* Read the NAND back in page-size groups to limit malloc size */
+-	for (verofs = ofs; verofs < ofs + len;
+-	     verofs += verlen, buf += verlen) {
+-		verlen = min(nand->writesize, (uint32_t)(ofs + len - verofs));
+-		rval = nand_read(nand, verofs, &verlen, verbuf);
++	for (verofs = ofs; len; len -= verlen, buf += verlen) {
++		verlen = min(nand->writesize, len);
++		rval = nand_read_with_flags(nand, verofs, &verlen, verbuf,
++					    flags);
+ 		if (!rval || (rval == -EUCLEAN))
+ 			rval = memcmp(buf, verbuf, verlen);
+ 
+ 		if (rval)
+ 			break;
++
++		verofs += verlen;
++		if ((verofs & nand->erasesize_mask) >= adjblocksize)
++			verofs += nand->erasesize -
++				  (verofs & nand->erasesize_mask);
+ 	}
+ 
+ 	free(verbuf);
+@@ -572,7 +615,7 @@ int nand_verify(nand_info_t *nand, loff_t ofs, size_t len, u_char *buf)
+ int nand_write_skip_bad(nand_info_t *nand, loff_t offset, size_t *length,
+ 		size_t *actual, loff_t lim, u_char *buffer, int flags)
+ {
+-	int rval = 0, blocksize;
++	int rval = 0, blocksize, adjblocksize;
+ 	size_t left_to_write = *length;
+ 	size_t used_for_write = 0;
+ 	u_char *p_buffer = buffer;
+@@ -582,6 +625,7 @@ int nand_write_skip_bad(nand_info_t *nand, loff_t offset, size_t *length,
+ 		*actual = 0;
+ 
+ 	blocksize = nand->erasesize;
++	adjblocksize = blocksize / nand->slc_mode_ratio;
+ 
+ 	/*
+ 	 * nand_write() handles unaligned, partial page writes.
+@@ -600,7 +644,8 @@ int nand_write_skip_bad(nand_info_t *nand, loff_t offset, size_t *length,
+ 		return -EINVAL;
+ 	}
+ 
+-	need_skip = check_skip_len(nand, offset, *length, &used_for_write);
++	need_skip = check_skip_len(nand, offset, *length,
++				   &used_for_write, flags);
+ 
+ 	if (actual)
+ 		*actual = used_for_write;
+@@ -617,11 +662,13 @@ int nand_write_skip_bad(nand_info_t *nand, loff_t offset, size_t *length,
+ 		return -EFBIG;
+ 	}
+ 
+-	if (!need_skip && !(flags & WITH_DROP_FFS)) {
+-		rval = nand_write(nand, offset, length, buffer);
++	if (!(flags & WITH_SLC_MODE) && !need_skip && !(flags & WITH_DROP_FFS)) {
++		rval = nand_write_with_flags(nand, offset, length, buffer,
++					     flags);
+ 
+ 		if ((flags & WITH_WR_VERIFY) && !rval)
+-			rval = nand_verify(nand, offset, *length, buffer);
++			rval = nand_verify(nand, offset, *length, buffer,
++					   flags);
+ 
+ 		if (rval == 0)
+ 			return 0;
+@@ -645,10 +692,10 @@ int nand_write_skip_bad(nand_info_t *nand, loff_t offset, size_t *length,
+ 			continue;
+ 		}
+ 
+-		if (left_to_write < nand->writesize)
++		if (left_to_write < (adjblocksize - block_offset))
+ 			write_size = left_to_write;
+ 		else
+-			write_size = nand->writesize;
++			write_size = adjblocksize - block_offset;
+ 
+ 		truncated_write_size = write_size;
+ #ifdef CONFIG_CMD_NAND_TRIMFFS
+@@ -657,14 +704,17 @@ int nand_write_skip_bad(nand_info_t *nand, loff_t offset, size_t *length,
+ 					&write_size);
+ #endif
+ 
+-		rval = nand_write(nand, offset, &truncated_write_size,
+-				p_buffer);
++		rval = nand_write_with_flags(nand, offset,
++				&truncated_write_size,
++				p_buffer, flags);
+ 
+ 		if ((flags & WITH_WR_VERIFY) && !rval)
+ 			rval = nand_verify(nand, offset,
+-				truncated_write_size, p_buffer);
++				truncated_write_size, p_buffer, flags);
+ 
+ 		offset += write_size;
++		if (write_size == adjblocksize - block_offset)
++			offset += blocksize - adjblocksize;
+ 		p_buffer += write_size;
+ 
+ 		if (rval != 0) {
+@@ -701,12 +751,14 @@ int nand_write_skip_bad(nand_info_t *nand, loff_t offset, size_t *length,
+  * @param lim maximum size that actual may be in order to not exceed the
+  * buffer
+  * @param buffer buffer to write to
++ * @flags flags changing the function behavior. Currently, only WITH_SLC_MODE
++ * is supported
+  * @return 0 in case of success
+  */
+ int nand_read_skip_bad(nand_info_t *nand, loff_t offset, size_t *length,
+-		size_t *actual, loff_t lim, u_char *buffer)
++		size_t *actual, loff_t lim, u_char *buffer, int flags)
+ {
+-	int rval;
++	int rval, adjblocksize;
+ 	size_t left_to_read = *length;
+ 	size_t used_for_read = 0;
+ 	u_char *p_buffer = buffer;
+@@ -720,7 +772,9 @@ int nand_read_skip_bad(nand_info_t *nand, loff_t offset, size_t *length,
+ 		return -EINVAL;
+ 	}
+ 
+-	need_skip = check_skip_len(nand, offset, *length, &used_for_read);
++	adjblocksize = nand->erasesize / nand->slc_mode_ratio;
++	need_skip = check_skip_len(nand, offset, *length, &used_for_read,
++				   flags);
+ 
+ 	if (actual)
+ 		*actual = used_for_read;
+@@ -737,8 +791,9 @@ int nand_read_skip_bad(nand_info_t *nand, loff_t offset, size_t *length,
+ 		return -EFBIG;
+ 	}
+ 
+-	if (!need_skip) {
+-		rval = nand_read(nand, offset, length, buffer);
++	if (!(flags & WITH_SLC_MODE) && !need_skip) {
++		rval = nand_read_with_flags(nand, offset, length, buffer,
++					    flags);
+ 		if (!rval || rval == -EUCLEAN)
+ 			return 0;
+ 
+@@ -761,12 +816,13 @@ int nand_read_skip_bad(nand_info_t *nand, loff_t offset, size_t *length,
+ 			continue;
+ 		}
+ 
+-		if (left_to_read < (nand->erasesize - block_offset))
++		if (left_to_read < (adjblocksize - block_offset))
+ 			read_length = left_to_read;
+ 		else
+-			read_length = nand->erasesize - block_offset;
++			read_length = adjblocksize - block_offset;
+ 
+-		rval = nand_read(nand, offset, &read_length, p_buffer);
++		rval = nand_read_with_flags(nand, offset, &read_length,
++					    p_buffer, flags);
+ 		if (rval && rval != -EUCLEAN) {
+ 			printf("NAND read from offset %llx failed %d\n",
+ 				offset, rval);
+@@ -776,6 +832,8 @@ int nand_read_skip_bad(nand_info_t *nand, loff_t offset, size_t *length,
+ 
+ 		left_to_read -= read_length;
+ 		offset       += read_length;
++		if (read_length == adjblocksize - block_offset)
++			offset += nand->erasesize - adjblocksize;
+ 		p_buffer     += read_length;
+ 	}
+ 
+diff --git a/include/linux/mtd/mtd.h b/include/linux/mtd/mtd.h
+index e9ad5dfda..c18a725c6 100644
+--- a/include/linux/mtd/mtd.h
++++ b/include/linux/mtd/mtd.h
+@@ -90,6 +90,7 @@ struct mtd_oob_ops {
+ 	uint32_t	ooboffs;
+ 	uint8_t		*datbuf;
+ 	uint8_t		*oobbuf;
++	bool		slc_mode;
+ };
+ 
+ #ifdef CONFIG_SYS_NAND_MAX_OOBFREE
+@@ -200,6 +201,8 @@ struct mtd_info {
+ 	unsigned int erasesize_mask;
+ 	unsigned int writesize_mask;
+ 
++	int slc_mode_ratio;
++
+ 	/*
+ 	 * read ops return -EUCLEAN if max number of bitflips corrected on any
+ 	 * one region comprising an ecc step equals or exceeds this value.
+@@ -253,6 +256,10 @@ struct mtd_info {
+ 		      size_t *retlen, u_char *buf);
+ 	int (*_write) (struct mtd_info *mtd, loff_t to, size_t len,
+ 		       size_t *retlen, const u_char *buf);
++	int (*_read_slc_mode) (struct mtd_info *mtd, loff_t from, size_t len,
++			       size_t *retlen, u_char *buf);
++	int (*_write_slc_mode) (struct mtd_info *mtd, loff_t to, size_t len,
++				size_t *retlen, const u_char *buf);
+ 	int (*_panic_write) (struct mtd_info *mtd, loff_t to, size_t len,
+ 			     size_t *retlen, const u_char *buf);
+ 	int (*_read_oob) (struct mtd_info *mtd, loff_t from,
+@@ -357,6 +364,10 @@ int mtd_read(struct mtd_info *mtd, loff_t from, size_t len, size_t *retlen,
+ 	     u_char *buf);
+ int mtd_write(struct mtd_info *mtd, loff_t to, size_t len, size_t *retlen,
+ 	      const u_char *buf);
++int mtd_read_slc_mode(struct mtd_info *mtd, loff_t from, size_t len,
++		      size_t *retlen, u_char *buf);
++int mtd_write_slc_mode(struct mtd_info *mtd, loff_t to, size_t len,
++		       size_t *retlen, const u_char *buf);
+ int mtd_panic_write(struct mtd_info *mtd, loff_t to, size_t len, size_t *retlen,
+ 		    const u_char *buf);
+ 
+diff --git a/include/linux/mtd/nand.h b/include/linux/mtd/nand.h
+index ca7c77784..45f0259fe 100644
+--- a/include/linux/mtd/nand.h
++++ b/include/linux/mtd/nand.h
+@@ -700,6 +700,8 @@ struct nand_chip {
+ 			int feature_addr, uint8_t *subfeature_para);
+ 	int (*setup_read_retry)(struct mtd_info *mtd, int retry_mode);
+ 	void (*manuf_cleanup)(struct mtd_info *mtd);
++	void (*set_slc_mode)(struct mtd_info *mtd, bool enable);
++	void (*fix_page)(struct mtd_info *mtd, int *page);
+ 
+ 	void *manuf_priv;
+ 
+@@ -732,6 +734,7 @@ struct nand_chip {
+ 	struct nand_jedec_params jedec_params;
+  
+ 	int read_retries;
++	bool slc_mode;
+ 
+ 	flstate_t state;
+ 
+diff --git a/include/nand.h b/include/nand.h
+index d2a53ab85..d65d4a79d 100644
+--- a/include/nand.h
++++ b/include/nand.h
+@@ -60,6 +60,18 @@ static inline int nand_write(nand_info_t *info, loff_t ofs, size_t *len, u_char
+ 	return mtd_write(info, ofs, *len, (size_t *)len, buf);
+ }
+ 
++static inline int nand_read_slc_mode(nand_info_t *info, loff_t ofs,
++				     size_t *len, u_char *buf)
++{
++	return mtd_read_slc_mode(info, ofs, *len, (size_t *)len, buf);
++}
++
++static inline int nand_write_slc_mode(nand_info_t *info, loff_t ofs,
++				      size_t *len, u_char *buf)
++{
++	return mtd_write_slc_mode(info, ofs, *len, (size_t *)len, buf);
++}
++
+ static inline int nand_block_isbad(nand_info_t *info, loff_t ofs)
+ {
+ 	return mtd_block_isbad(info, ofs);
+@@ -101,19 +113,20 @@ struct nand_erase_options {
+ 
+ typedef struct nand_erase_options nand_erase_options_t;
+ 
+-int nand_read_skip_bad(nand_info_t *nand, loff_t offset, size_t *length,
+-		       size_t *actual, loff_t lim, u_char *buffer);
+-
+ #define WITH_DROP_FFS	(1 << 0) /* drop trailing all-0xff pages */
+ #define WITH_WR_VERIFY	(1 << 1) /* verify data was written correctly */
++#define WITH_SLC_MODE	(1 << 2) /* read/write MLC NAND in SLC mode */
+ 
++int nand_read_skip_bad(nand_info_t *nand, loff_t offset, size_t *length,
++		       size_t *actual, loff_t lim, u_char *buffer, int flags);
+ int nand_write_skip_bad(nand_info_t *nand, loff_t offset, size_t *length,
+ 			size_t *actual, loff_t lim, u_char *buffer, int flags);
+ int nand_erase_opts(nand_info_t *meminfo, const nand_erase_options_t *opts);
+ int nand_torture(nand_info_t *nand, loff_t offset);
+ int nand_verify_page_oob(nand_info_t *nand, struct mtd_oob_ops *ops,
+ 			loff_t ofs);
+-int nand_verify(nand_info_t *nand, loff_t ofs, size_t len, u_char *buf);
++int nand_verify(nand_info_t *nand, loff_t ofs, size_t len, u_char *buf,
++		int flags);
+ 
+ #define NAND_LOCK_STATUS_TIGHT	0x01
+ #define NAND_LOCK_STATUS_UNLOCK 0x04

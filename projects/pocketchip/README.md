@@ -61,20 +61,53 @@ remains recoverable forever short of physical damage to the SoC.
 
 ## Status
 
+**Full, writable OpenWrt 25.12.4 now boots persistently from NAND** and is
+reachable over SSH via the USB-ethernet gadget — survives cold power cycles, no
+host/FEL needed. squashfs `/rom` + ubifs `/overlay` (≈1.7 GiB writable) on a
+slc-mode UBI.
+
 | Component               | State            | Notes                                    |
 |-------------------------|------------------|-------------------------------------------|
-| Mainline U-Boot         | ✓ working        | `CHIP_defconfig` + custom `bootcmd`       |
-| Mainline kernel 6.6/6.12| ✓ working        | sunxi target + PocketCHIP DT              |
+| OpenWrt on NAND (root)  | ✓ working        | writable squashfs+overlay on slc-mode UBI, persistent |
+| NAND boot chain         | ✓ working        | legacy NTC u-boot (see below) — mainline SPL mis-detects this MLC |
+| Mainline kernel 6.12    | ✓ working        | sunxi target + our DT, boots from NAND    |
 | FEL boot                | ✓ working        | board enumerates, U-Boot runs, kernel runs|
-| USB gadget (ACM + ECM)  | ✓ working        | confirmed by USB enumeration on host      |
-| USB ethernet            | ✓ working        | `ping 10.43.43.1` ≈ 0.4 ms RTT            |
+| USB gadget (ACM + ECM)  | ✓ working        | CDC-ACM serial + CDC-ECM ethernet (g_cdc) |
+| USB ethernet            | ✓ working        | `ssh root@10.43.43.1`, board runs DHCP    |
 | AXP209 PMIC             | ✓ working        | mainline driver, regulators correct       |
-| RTL8723BS WiFi+BT       | ⚙  driver loads  | needs runtime verification                |
-| LCD panel + backlight   | ⚙  DT in place   | needs visual confirmation                 |
-| Resistive touchscreen   | ⚙  driver loads  | needs runtime verification                |
-| Audio (sun4i-codec)     | ⚙  driver loads  | needs runtime verification                |
-| Keyboard matrix         | ✗ unsupported    | per-revision wiring TBD                   |
-| NAND install pipeline   | ⚙  scripted      | scripts + procedure ready, see [docs/nand-install.md](docs/nand-install.md). Pending RAM-boot sign-off before first run. |
+| RTL8723BS WiFi+BT       | ⚙  driver binds  | SDIO chip detected, `phy0` registered, but the vendor driver's cfg80211 can't create a station iface (`iw interface add` → -95) and reads MAC 00:00:00:00:00:00 — not associating. Not a firmware issue (fw is built into the driver). |
+| LCD / touch / audio     | n/a (bare C.H.I.P.) | test unit is a bare C.H.I.P. — no screen/keyboard/touch hardware to verify against |
+| Keyboard matrix         | n/a (bare C.H.I.P.) | PocketCHIP-only peripheral; absent on the test unit |
+
+### How OpenWrt gets onto the NAND (the working method)
+
+The CHIP's Toshiba **TC58TEG5DCLTA00 MLC NAND** is the whole challenge. Two
+hard-won facts drove the working pipeline:
+
+1. **Mainline U-Boot's sunxi NAND SPL mis-detects this MLC's boot-slot
+   geometry**, so it can't reliably load U-Boot from NAND. The fix is the
+   **legacy Next Thing Co. U-Boot** (`Project-chip-crumbs/CHIP-u-boot`,
+   `production-mlc-pc`) plus an SPL-geometry-hardcode patch and a `slc-mode`
+   read/write patch. boot0 is a 256-page full-eraseblock image.
+2. **U-Boot's `nand write.slc-mode` and the kernel's slc-mode NAND read use
+   incompatible ECC**, so a UBI rootfs written from U-Boot is unreadable by the
+   kernel (`ubi_io_read: -74 (ECC error)` → root-mount panic). The UBI rootfs
+   must be written **by a running kernel** so write/read ECC match.
+
+Pipeline:
+
+- **Boot region** (legacy boot0 ×2, legacy resident U-Boot @0x800000, OpenWrt
+  `zImage` @0x1000000, dtb @0x2000000) is flashed slc-mode from a FEL session
+  (`scripts/37-fel-flash-openwrt.sh`).
+- **UBI rootfs** is installed by FEL-booting OpenWrt's *own* initramfs into RAM
+  (`scripts/40-fel-boot-openwrt-initramfs.sh`, using an `ENV_IS_NOWHERE` "felboot"
+  U-Boot so a polluted NAND env can't hijack boot), then over SSH:
+  `ubiformat /dev/mtd5 -f <factory.ubi>`. Reboot → the resident U-Boot loads
+  kernel+dtb (`nand read.slc-mode` + `bootz`, bootargs `ubi.mtd=UBI
+  ubi.block=0,rootfs root=/dev/ubiblock0_0 rootfstype=squashfs`) → OpenWrt.
+
+NAND layout: `spl`(0)/`spl-backup`(0x400000)/`uboot`(0x800000)/`env`(0xc00000)/
+`boot`(0x1000000, 64 MiB raw kernel+dtb)/`UBI`(0x5000000, slc-mode rootfs).
 
 ## Layout
 
@@ -101,14 +134,23 @@ projects/pocketchip/
     06-build-initramfs.sh  busybox smoke-test initramfs
     10-build-openwrt.sh  install DTS, append Device entry, build
     11-pull-openwrt-image.sh  scp artifacts back to the host
-    20-build-uboot-nand.sh  NAND-resident u-boot (UBI bootcmd)
-    21-pack-spl-for-nand.sh wrap SPL with sunxi NAND ECC layout
-    22-build-ubi-image.sh   pack kernel + rootfs into UBI volumes
-    23-flash-nand.sh        run ON the booted PocketCHIP to flash NAND
+    20-23,30-35         earlier NAND-flash experiments (mainline/macromorgan
+                        u-boot variants) — superseded by the legacy path
+    36-fel-flash-legacy.sh        flash legacy boot0+u-boot+kernel (RAM-rootfs)
+    37-fel-flash-openwrt.sh       flash the OpenWrt boot region (boot0, u-boot,
+                                  zImage, dtb) slc-mode via FEL
+    38-fel-catch-flash-openwrt.sh aggressive FEL-catch wrapper for 37
+    40-fel-boot-openwrt-initramfs.sh  FEL-boot OpenWrt initramfs into RAM
+                                  (to ubiformat the UBI rootfs from the kernel)
     fel-boot.sh          drive sunxi-fel to RAM-boot our build
     fel-boot-openwrt.sh  same, but for the OpenWrt initramfs image
+  uboot-legacy/          legacy NTC CHIP-u-boot build scripts + patches
+    build-one-variant.sh   build a variant with a given bootcmd
+    build-felboot.sh       ENV_IS_NOWHERE felboot variant (console=ttyS0)
+    make-boot0.sh          256-page MLC boot0 image
+    patches/               slc-mode + SPL geometry + spectre patches
   tools/
-    sunxi-tools/         git submodule, pinned to v1.4.2
+    sunxi-tools/         git submodule (fel.c patched: SPL_MAX_VERSION 1→3)
   docs/
     flashing.md          FEL recovery procedure + smoke test
 ```

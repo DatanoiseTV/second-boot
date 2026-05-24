@@ -1,0 +1,35 @@
+diff --git a/drivers/mtd/nand/sunxi_nand_spl.c b/drivers/mtd/nand/sunxi_nand_spl.c
+--- a/drivers/mtd/nand/sunxi_nand_spl.c
++++ b/drivers/mtd/nand/sunxi_nand_spl.c
+@@ -192,16 +192,29 @@ static void nand_apply_config(const struct nfc_config *conf)
+ 	writel(conf->page_size, SUNXI_NFC_BASE + NFC_SPARE_AREA);
+ }
+ 
++static int nand_toshiba_slc_page(int page)
++{
++	int relpage = page & 0x7f;
++
++	if (!relpage)
++		return page;
++
++	relpage = (relpage * 2) - 1;
++	return (page & ~0xff) | relpage;
++}
++
+ static int nand_load_page(const struct nfc_config *conf, u32 offs)
+ {
+ 	int page = offs / conf->page_size;
++	int cmd_page;
+ 
++	cmd_page = nand_toshiba_slc_page(page);
+ 	writel((NFC_CMD_RNDOUTSTART << NFC_RANDOM_READ_CMD1_OFFSET) |
+ 	       (NFC_CMD_RNDOUT << NFC_RANDOM_READ_CMD0_OFFSET) |
+ 	       (NFC_CMD_READSTART << NFC_READ_CMD_OFFSET),
+ 	       SUNXI_NFC_BASE + NFC_RCMD_SET);
+-	writel(((page & 0xFFFF) << 16), SUNXI_NFC_BASE + NFC_ADDR_LOW);
+-	writel((page >> 16) & 0xFF, SUNXI_NFC_BASE + NFC_ADDR_HIGH);
++	writel(((cmd_page & 0xFFFF) << 16), SUNXI_NFC_BASE + NFC_ADDR_LOW);
++	writel((cmd_page >> 16) & 0xFF, SUNXI_NFC_BASE + NFC_ADDR_HIGH);
+ 	writel(NFC_ST_CMD_INT_FLAG, SUNXI_NFC_BASE + NFC_ST);
+ 	writel(NFC_SEND_CMD1 | NFC_SEND_CMD2 | NFC_RAW_CMD | NFC_WAIT_FLAG |
+ 	       ((conf->addr_cycles - 1) << NFC_ADDR_NUM_OFFSET) | NFC_SEND_ADR,

@@ -41,9 +41,25 @@ build_uboot() {
 }
 
 # --- resident: SPL + u-boot.bin that get written to NAND -------------------
+# IMPORTANT: copy the RESIDENT artifacts NOW, before the flasher build
+# below overwrites u-boot*.bin / spl/* in the source tree.
 build_uboot "$FRAG_RESIDENT" resident
-cp -v "$UBOOT_SRC/u-boot.bin"        "$UBOOT_OUT/u-boot.bin"          # resident proper
-cp -v "$UBOOT_SRC/spl/sunxi-spl.bin" "$UBOOT_OUT/sunxi-spl.bin"       # resident SPL (pre-ECC)
+# u-boot-dtb.bin (NOT plain u-boot.bin): it carries the appended control
+# DTB the resident u-boot needs once the SPL hands off. macromorgan flashes
+# this one too.
+cp -v "$UBOOT_SRC/u-boot-dtb.bin"    "$UBOOT_OUT/u-boot-dtb.bin"       # resident proper (+dtb)
+cp -v "$UBOOT_SRC/u-boot.bin"        "$UBOOT_OUT/u-boot.bin"           # (kept for reference)
+cp -v "$UBOOT_SRC/spl/sunxi-spl.bin" "$UBOOT_OUT/sunxi-spl.bin"        # resident SPL (pre-ECC)
+# The boot0 image (SPL wrapped with the BootROM's 64/1024 ECC + scramble)
+# is emitted by scripts/Makefile.xpl into spl/, gated on CONFIG_NAND_SUNXI.
+# This is macromorgan's spl-400000-4000-500.bin; 30-fel-flash-nand.sh writes
+# it RAW to NAND 0x0/0x400000. (The top-level Makefile only has a passthrough
+# rule, so the real file lives in spl/.)
+if [ -f "$UBOOT_SRC/spl/sunxi-spl-with-ecc.bin" ]; then
+    cp -v "$UBOOT_SRC/spl/sunxi-spl-with-ecc.bin" "$UBOOT_OUT/sunxi-spl-with-ecc.bin"
+else
+    warn "spl/sunxi-spl-with-ecc.bin missing; falling back to 21-pack-spl-for-nand.sh"
+fi
 
 # --- flasher: the FEL-loaded combined SPL+u-boot ---------------------------
 build_uboot "$FRAG_FLASHER" flasher
