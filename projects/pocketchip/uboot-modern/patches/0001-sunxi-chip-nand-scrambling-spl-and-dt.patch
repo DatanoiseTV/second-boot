@@ -1,0 +1,70 @@
+diff --git a/arch/arm/dts/sun5i-r8-chip.dts b/arch/arm/dts/sun5i-r8-chip.dts
+index 8c784a2c08..d56e70b0a7 100644
+--- a/arch/arm/dts/sun5i-r8-chip.dts
++++ b/arch/arm/dts/sun5i-r8-chip.dts
+@@ -280,3 +280,18 @@
+ 	usb0_vbus-supply = <&reg_usb0_vbus>;
+ 	usb1_vbus-supply = <&reg_vcc5v0>;
+ };
++
++/* Enable the on-SoC NAND controller (mainline leaves it disabled).
++ * ECC left on auto "hw" so u-boot and the Linux kernel select the same
++ * sunxi BCH strength/step by the same algorithm. */
++&nfc {
++	pinctrl-names = "default";
++	pinctrl-0 = <&nand_pins>, <&nand_cs0_pin>, <&nand_rb0_pin>;
++	status = "okay";
++
++	nand@0 {
++		reg = <0>;
++		allwinner,rb = <0>;
++		nand-ecc-mode = "hw";
++	};
++};
+diff --git a/drivers/mtd/nand/raw/nand_toshiba.c b/drivers/mtd/nand/raw/nand_toshiba.c
+index 99dc44df67..9f1e522f1f 100644
+--- a/drivers/mtd/nand/raw/nand_toshiba.c
++++ b/drivers/mtd/nand/raw/nand_toshiba.c
+@@ -69,6 +69,14 @@ static int toshiba_nand_init(struct nand_chip *chip)
+ {
+ 	if (nand_is_slc(chip))
+ 		chip->bbt_options |= NAND_BBT_SCAN2NDPAGE;
++	else
++		/*
++		 * Toshiba MLC NANDs (e.g. TC58TEG5DCLTA00) require the sunxi
++		 * data scrambler. The Linux nand_toshiba driver sets this for
++		 * the same chips (tc58teg5dclta00_init). Without it, u-boot
++		 * writes un-scrambled pages whose ECC the kernel cannot decode.
++		 */
++		chip->options |= NAND_NEED_SCRAMBLING;
+ 
+ 	return 0;
+ }
+diff --git a/drivers/mtd/nand/raw/sunxi_nand_spl.c b/drivers/mtd/nand/raw/sunxi_nand_spl.c
+index 4f1e2d9a57..931181eea4 100644
+--- a/drivers/mtd/nand/raw/sunxi_nand_spl.c
++++ b/drivers/mtd/nand/raw/sunxi_nand_spl.c
+@@ -442,6 +442,23 @@ static int nand_detect_config(struct nfc_config *conf, u32 offs, void *dest)
+ 	if (conf->valid)
+ 		return 0;
+ 
++	/*
++	 * PocketCHIP/C.H.I.P. Toshiba TC58TEG5DCLTA00 4G MLC: the generic SPL
++	 * detector mis-detects this boot slot. Use the known geometry --
++	 * 16 KiB page, BCH-40 (strength index 4) over 1 KiB steps, 5 address
++	 * cycles, randomized -- matching the full sunxi_nand driver and the
++	 * Linux kernel (which now share ECC after the NAND_NEED_SCRAMBLING fix).
++	 */
++	conf->addr_cycles = 5;
++	conf->page_size = 16384;
++	conf->ecc_size = 1024;
++	conf->ecc_strength = 4;
++	conf->randomize = true;
++	conf->nseeds = ARRAY_SIZE(random_seed);
++	nand_apply_config(conf);
++	conf->valid = true;
++	return 0;
++
+ 	/*
+ 	 * Modern NANDs are more likely than legacy ones, so we start testing
+ 	 * with 5 address cycles.

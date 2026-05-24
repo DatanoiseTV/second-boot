@@ -69,7 +69,7 @@ slc-mode UBI.
 | Component               | State            | Notes                                    |
 |-------------------------|------------------|-------------------------------------------|
 | OpenWrt on NAND (root)  | ✓ working        | writable squashfs+overlay on slc-mode UBI, persistent |
-| NAND boot chain         | ✓ working        | legacy NTC u-boot (see below) — mainline SPL mis-detects this MLC |
+| NAND boot chain         | ✓ working        | mainline U-Boot v2025.01 — SPL geometry hardcode + a Toshiba-MLC scrambling fix give bit-exact ECC parity with the kernel (see below) |
 | Mainline kernel 6.12    | ✓ working        | sunxi target + our DT, boots from NAND    |
 | FEL boot                | ✓ working        | board enumerates, U-Boot runs, kernel runs|
 | USB gadget (ACM + ECM)  | ✓ working        | CDC-ACM serial + CDC-ECM ethernet (g_cdc) |
@@ -81,30 +81,47 @@ slc-mode UBI.
 
 ### How OpenWrt gets onto the NAND (the working method)
 
-The CHIP's Toshiba **TC58TEG5DCLTA00 MLC NAND** is the whole challenge. Two
-hard-won facts drove the working pipeline:
+The CHIP's Toshiba **TC58TEG5DCLTA00 MLC NAND** is the whole challenge. The
+working pipeline runs **mainline U-Boot v2025.01** end-to-end, after solving two
+problems that historically forced a legacy 2016 NTC U-Boot:
 
-1. **Mainline U-Boot's sunxi NAND SPL mis-detects this MLC's boot-slot
-   geometry**, so it can't reliably load U-Boot from NAND. The fix is the
-   **legacy Next Thing Co. U-Boot** (`Project-chip-crumbs/CHIP-u-boot`,
-   `production-mlc-pc`) plus an SPL-geometry-hardcode patch and a `slc-mode`
-   read/write patch. boot0 is a 256-page full-eraseblock image.
-2. **U-Boot's `nand write.slc-mode` and the kernel's slc-mode NAND read use
-   incompatible ECC**, so a UBI rootfs written from U-Boot is unreadable by the
-   kernel (`ubi_io_read: -74 (ECC error)` → root-mount panic). The UBI rootfs
-   must be written **by a running kernel** so write/read ECC match.
+1. **Mainline's sunxi NAND SPL mis-detects this MLC's boot-slot geometry**, so
+   the BootROM-loaded SPL couldn't find U-Boot. Fix: hardcode the geometry
+   (5 addr cycles, 16 KiB page, 1024-byte ECC step, scrambler on) in
+   `sunxi_nand_spl.c`, and build a 256-page full-eraseblock `boot0` with the
+   BootROM's BCH-64/1024 ECC.
+2. **U-Boot and the kernel computed different NAND ECC**, so anything U-Boot
+   wrote came back uncorrectable to the kernel. Root cause: U-Boot's
+   `nand_toshiba.c` never set `NAND_NEED_SCRAMBLING` for MLC (the kernel's
+   `tc58teg5dclta00_init` does), so U-Boot stored *un-scrambled* data with a
+   different BCH-40 result. **Fix (one line):** set `NAND_NEED_SCRAMBLING` for
+   MLC in U-Boot's `toshiba_nand_init`. With that, U-Boot scrambles + computes
+   BCH-40/1024 identically to the kernel — **bit-exact ECC parity**, verified on
+   hardware (U-Boot writes a page, kernel reads it back byte-for-byte,
+   `ecc_failures`=0). The NAND env is now shareable between U-Boot and Linux.
+
+Both fixes live in `uboot-modern/patches/` (see `uboot-modern/CONFIG-NOTES.md`
+for the Kconfig/DT changes needed to enable NAND in `CHIP_defconfig`).
+
+The **boot region** is therefore plain MLC, written by U-Boot itself with the
+unified ECC. The **UBI rootfs still uses slc-mode**, but no longer for ECC
+reasons: UBI/ubinize cannot use the 4 MiB MLC eraseblock (`too high physical
+eraseblock size` — UBI's max PEB is 2 MiB), and slc-mode presents a 2 MiB
+logical PEB that UBI accepts. A slc-mode UBI must be written by a *running
+kernel* (`ubiformat`), since U-Boot has no slc-mode write here.
 
 Pipeline:
 
-- **Boot region** (legacy boot0 ×2, legacy resident U-Boot @0x800000, OpenWrt
-  `zImage` @0x1000000, dtb @0x2000000) is flashed slc-mode from a FEL session
-  (`scripts/37-fel-flash-openwrt.sh`).
-- **UBI rootfs** is installed by FEL-booting OpenWrt's *own* initramfs into RAM
-  (`scripts/40-fel-boot-openwrt-initramfs.sh`, using an `ENV_IS_NOWHERE` "felboot"
-  U-Boot so a polluted NAND env can't hijack boot), then over SSH:
-  `ubiformat /dev/mtd5 -f <factory.ubi>`. Reboot → the resident U-Boot loads
-  kernel+dtb (`nand read.slc-mode` + `bootz`, bootargs `ubi.mtd=UBI
-  ubi.block=0,rootfs root=/dev/ubiblock0_0 rootfstype=squashfs`) → OpenWrt.
+- **Boot region** (modern `boot0` ×2 @0x0/0x400000, modern resident U-Boot
+  @0x800000, OpenWrt `zImage` @0x1000000, dtb @0x2000000) — all plain MLC,
+  flashed in one FEL session by `scripts/42-fel-flash-modern.sh`: it FEL-runs a
+  modern U-Boot "flasher" that sources a staged `nand write` script, so the
+  writes use the same driver the SPL/U-Boot/kernel later read with.
+- **UBI rootfs** (slc-mode) is installed by FEL-booting OpenWrt's *own*
+  initramfs into RAM (`scripts/40-fel-boot-openwrt-initramfs.sh`), then over SSH:
+  `ubiformat /dev/mtd5 -f <factory.ubi>`. Cold-boot → modern `boot0` → modern
+  SPL → U-Boot v2025.01 (bootargs `ubi.mtd=UBI ubi.block=0,rootfs
+  root=/dev/ubiblock0_0 rootfstype=squashfs rootwait`) → kernel → OpenWrt.
 
 NAND layout: `spl`(0)/`spl-backup`(0x400000)/`uboot`(0x800000)/`env`(0xc00000)/
 `boot`(0x1000000, 64 MiB raw kernel+dtb)/`UBI`(0x5000000, slc-mode rootfs).
@@ -142,8 +159,14 @@ projects/pocketchip/
     38-fel-catch-flash-openwrt.sh aggressive FEL-catch wrapper for 37
     40-fel-boot-openwrt-initramfs.sh  FEL-boot OpenWrt initramfs into RAM
                                   (to ubiformat the UBI rootfs from the kernel)
+    41-fel-flash-bootregion.sh    flash boot region only (boot0+u-boot+kernel+dtb)
+    42-fel-flash-modern.sh        flash the MODERN boot chain (mainline v2025.01,
+                                  plain MLC, unified ECC) in one FEL session
     fel-boot.sh          drive sunxi-fel to RAM-boot our build
     fel-boot-openwrt.sh  same, but for the OpenWrt initramfs image
+  uboot-modern/          mainline U-Boot v2025.01 NAND-boot enablement
+    patches/               Toshiba-MLC NAND_NEED_SCRAMBLING + SPL geometry + DT
+    CONFIG-NOTES.md        Kconfig/DT changes to enable NAND in CHIP_defconfig
   uboot-legacy/          legacy NTC CHIP-u-boot build scripts + patches
     build-one-variant.sh   build a variant with a given bootcmd
     build-felboot.sh       ENV_IS_NOWHERE felboot variant (console=ttyS0)
